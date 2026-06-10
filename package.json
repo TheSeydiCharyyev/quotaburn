@@ -30,6 +30,14 @@
   ],
   "author": "Seydi Charyyev",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TheSeydiCharyyev/ccwhy.git"
+  },
+  "homepage": "https://github.com/TheSeydiCharyyev/ccwhy#readme",
+  "bugs": {
+    "url": "https://github.com/TheSeydiCharyyev/ccwhy/issues"
+  },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "tsup": "^8.0.0",
