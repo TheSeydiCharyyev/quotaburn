@@ -8,6 +8,7 @@ import {
   costOfTotals, resolvePricing, type CostBreakdown,
 } from './pricing.js';
 import { scan, type ScanResult, type TokenTotals } from './scan.js';
+import { bold, header, money, note, warn } from './style.js';
 
 const pkg = createRequire(import.meta.url)('../package.json') as { version: string };
 
@@ -59,16 +60,16 @@ async function main(): Promise<void> {
     args.project ? `project: ${args.project}` : null,
   ].filter(Boolean).join(' · ');
 
-  console.log(`\nccwhy v${pkg.version} — ${scope} — ${root}`);
-  console.log(`${r.files} files (${mb} MB) · ${fmt(r.stats.lines)} lines · ${fmt(r.stats.skipped)} skipped · ${elapsed}s\n`);
+  console.log(`\n${bold(`ccwhy v${pkg.version}`)} — ${scope} — ${note(root)}`);
+  console.log(note(`${r.files} files (${mb} MB) · ${fmt(r.stats.lines)} lines · ${fmt(r.stats.skipped)} skipped · ${elapsed}s`) + '\n');
 
-  console.log(`sessions: ${r.sessions} · assistant turns: ${fmt(r.assistantTurns)}`);
-  console.log(`subagent share of output tokens: ${pct(r.subagentTotals.output, r.totals.output)}\n`);
+  console.log(`sessions: ${r.sessions} · assistant turns: ${fmt(r.assistantTurns)} · subagent output share: ${pct(r.subagentTotals.output, r.totals.output)}\n`);
 
   printTotals(r.totals);
-  printCost(r);
+  const cost = computeCost(r);
+  printCost(cost);
 
-  console.log('by model:');
+  console.log(header('by model:'));
   for (const [model, t] of [...r.byModel.entries()].sort((a, b) => b[1].output - a[1].output)) {
     const p = resolvePricing(model);
     const dollars = p ? `$${costOfTotals(t, p).total.toFixed(2)}`.padStart(10) : '         —';
@@ -76,7 +77,7 @@ async function main(): Promise<void> {
   }
 
   const totalResidency = r.tools.reduce((s, t) => s + t.residencyCost, 0);
-  console.log(`\ntop context eaters (residency-weighted — tokens added × turns they stayed · ${r.contextResets} context resets detected):`);
+  console.log(`\n${header('top context eaters')} ${note(`(tokens added × turns they stayed in context · ${r.contextResets} context resets detected)`)}`);
   for (const t of r.tools.slice(0, 12)) {
     console.log(
       `  ${bar(t.residencyCost, totalResidency)} ${pct(t.residencyCost, totalResidency).padStart(6)}  ` +
@@ -84,7 +85,7 @@ async function main(): Promise<void> {
     );
   }
 
-  console.log('\nrepeated file reads (same file, same context window):');
+  console.log(`\n${header('repeated file reads')} ${note('(same file, same context window)')}`);
   for (const rr of r.repeatedReads.slice(0, 10)) {
     console.log(`  ${String(rr.reads).padStart(3)}× ${shorten(rr.filePath, 70).padEnd(72)} ~${fmt(rr.wastedTokens).padStart(10)} tok wasted`);
   }
@@ -94,19 +95,26 @@ async function main(): Promise<void> {
   printSubagents(r);
 
   const c = r.cache;
-  console.log('\ncache expiry (idle gap > TTL → cache died, you paid to rebuild it):');
+  console.log(`\n${header('cache expiry')} ${note('(idle gap > TTL → cache died, you paid to rebuild it)')}`);
   console.log(`  expiry events                ${fmt(c.expiryEvents).padStart(12)}`);
-  console.log(`  rebuilt after idle           ${fmt(c.recreationTokens).padStart(12)} tok  ≈ $${c.recreationDollars.toFixed(2)} at API prices`);
-  console.log(`  avoidable with 1h TTL        ${fmt(c.avoidableWith1h).padStart(12)} tok  (#46829)`);
+  console.log(`  rebuilt after idle           ${fmt(c.recreationTokens).padStart(12)} tok  ≈ ${money(`$${c.recreationDollars.toFixed(2)}`)} at API prices`);
+  console.log(`  avoidable with 1h TTL        ${fmt(c.avoidableWith1h).padStart(12)} tok  ${note('(#46829)')}`);
   console.log('  top idle burns:');
   for (const e of c.topEvents.slice(0, 8)) {
     const when = e.timestamp.slice(0, 16).replace('T', ' ');
-    console.log(`    ${when}  idle ${gapHuman(e.gapMinutes).padStart(8)}  ttl ${e.ttl}  rebuild ${fmt(e.recreationTokens).padStart(10)} tok  ${e.project}`);
+    console.log(`    ${note(when)}  idle ${warn(gapHuman(e.gapMinutes).padStart(8))}  ttl ${e.ttl}  rebuild ${fmt(e.recreationTokens).padStart(10)} tok  ${note(e.project)}`);
   }
+
+  printQuickWins(r, cost.sum.total);
   console.log();
 }
 
-function printCost(r: Awaited<ReturnType<typeof scan>>): void {
+interface CostSummary {
+  sum: CostBreakdown;
+  unknown: string[];
+}
+
+function computeCost(r: ScanResult): CostSummary {
   const sum: CostBreakdown = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
   const unknown: string[] = [];
   for (const [model, t] of r.byModel) {
@@ -122,15 +130,74 @@ function printCost(r: Awaited<ReturnType<typeof scan>>): void {
     sum.cacheWrite += c.cacheWrite;
     sum.total += c.total;
   }
+  return { sum, unknown };
+}
+
+function printCost({ sum, unknown }: CostSummary): void {
   const usd = (n: number): string => `$${n.toFixed(2)}`.padStart(12);
-  console.log('estimated cost at API list prices:');
-  console.log(`  total             ${usd(sum.total)}`);
-  console.log(`    cache read      ${usd(sum.cacheRead)}   (${CACHE_READ_MULT}× input price)`);
-  console.log(`    cache write     ${usd(sum.cacheWrite)}   (${CACHE_WRITE_5M_MULT}× 5m / ${CACHE_WRITE_1H_MULT}× 1h)`);
+  console.log(header('estimated cost at API list prices:'));
+  console.log(`  total             ${money(usd(sum.total))}`);
+  console.log(`    cache read      ${usd(sum.cacheRead)}   ${note(`(${CACHE_READ_MULT}× input price)`)}`);
+  console.log(`    cache write     ${usd(sum.cacheWrite)}   ${note(`(${CACHE_WRITE_5M_MULT}× 5m / ${CACHE_WRITE_1H_MULT}× 1h)`)}`);
   console.log(`    output          ${usd(sum.output)}`);
   console.log(`    input (uncached)${usd(sum.input)}`);
-  if (unknown.length > 0) console.log(`  excluded (no pricing data): ${unknown.join(', ')}`);
-  console.log('  note: subscription plans do not bill per token — this is the API-price value of your usage\n');
+  if (unknown.length > 0) console.log(warn(`  excluded (no pricing data): ${unknown.join(', ')}`));
+  console.log(note('  note: subscription plans do not bill per token — this is the API-price value of your usage') + '\n');
+}
+
+interface QuickWin {
+  severity: number;
+  text: string;
+}
+
+function printQuickWins(r: ScanResult, totalDollars: number): void {
+  const wins: QuickWin[] = [];
+
+  // severities are data-driven: pure, directly-avoidable waste ranks above general advice
+  if (totalDollars > 0 && r.cache.recreationDollars / totalDollars > 0.05) {
+    const share = pct(r.cache.recreationDollars, totalDollars);
+    wins.push({
+      severity: (r.cache.recreationDollars / totalDollars) * 2, // pure waste, fully avoidable
+      text: `don't resume idle sessions: ${money(`$${r.cache.recreationDollars.toFixed(2)}`)} (${share} of everything) went to rebuilding expired cache — start a fresh session with a short handoff instead`,
+    });
+  }
+
+  const wastedReads = r.repeatedReads.reduce((s, x) => s + x.wastedTokens, 0);
+  if (wastedReads > 100_000 && r.repeatedReads[0]) {
+    const top = r.repeatedReads[0];
+    wins.push({
+      severity: Math.min(0.5, wastedReads / 10_000_000),
+      text: `same files re-read in one session: ~${fmt(wastedReads)} tok wasted; worst: ${shorten(top.filePath, 50)} read ${top.reads}× — and every copy stays in context (see top context eaters)`,
+    });
+  }
+
+  const startupMedian = percentile(
+    r.startups.map((s) => s.inputUncached + s.cacheRead + s.cacheCreation).sort((a, b) => a - b),
+    50,
+  );
+  if (startupMedian > 20_000) {
+    wins.push({
+      severity: Math.min(0.5, startupMedian / 200_000),
+      text: `every session starts ~${fmt(startupMedian)} tok deep before your first word (system prompt + tools + skills + CLAUDE.md) — trim instructions and MCP servers you don't use`,
+    });
+  }
+
+  if (r.tools[0] && r.tools[0].name === 'Read') {
+    const share = r.tools.reduce((s, t) => s + t.residencyCost, 0);
+    if (share > 0 && r.tools[0].residencyCost / share > 0.6) {
+      wins.push({
+        severity: 0.15, // general advice, not directly-billable waste
+        text: `file reads dominate your context (${pct(r.tools[0].residencyCost, share)} of residency cost) — read selectively (offsets/limits, grep first), and prefer fresh sessions over ever-growing ones`,
+      });
+    }
+  }
+
+  if (wins.length === 0) return;
+  console.log(`\n${header('top quick wins:')}`);
+  wins
+    .sort((a, b) => b.severity - a.severity)
+    .slice(0, 3)
+    .forEach((w, i) => console.log(`  ${bold(String(i + 1))}. ${w.text}`));
 }
 
 function toJson(r: ScanResult, root: string): Record<string, unknown> {
@@ -156,7 +223,7 @@ function toJson(r: ScanResult, root: string): Record<string, unknown> {
 }
 
 function printTotals(t: TokenTotals): void {
-  console.log('tokens:');
+  console.log(header('tokens:'));
   console.log(`  output            ${fmt(t.output).padStart(15)}`);
   console.log(`  input (uncached)  ${fmt(t.inputUncached).padStart(15)}`);
   console.log(`  cache read        ${fmt(t.cacheRead).padStart(15)}`);
@@ -188,7 +255,7 @@ function printStartupTax(r: Awaited<ReturnType<typeof scan>>): void {
   const fresh = r.startups.filter((s) => s.cacheRead < 10_000);
   const freshWrites = fresh.reduce((s, x) => s + x.cacheCreation, 0);
 
-  console.log('\nsession startup tax (context already spent before your first word does anything):');
+  console.log(`\n${header('session startup tax')} ${note('(context already spent before your first word does anything)')}`);
   console.log(`  main sessions analyzed       ${fmt(sizes.length).padStart(12)}`);
   console.log(`  context at turn 1            median ${fmt(percentile(sizes, 50))} · p90 ${fmt(percentile(sizes, 90))} tok`);
   console.log(`  fresh starts (cold cache)    ${fmt(fresh.length).padStart(12)}  paying ${fmt(freshWrites)} tok of cache writes total`);
@@ -196,7 +263,7 @@ function printStartupTax(r: Awaited<ReturnType<typeof scan>>): void {
 
 function printSubagents(r: Awaited<ReturnType<typeof scan>>): void {
   const groups = r.subagentGroups;
-  console.log('\nsubagents & workflows:');
+  console.log(`\n${header('subagents & workflows:')}`);
   if (groups.length === 0) {
     console.log('  no subagent activity found');
     return;
@@ -218,9 +285,9 @@ function printSubagents(r: Awaited<ReturnType<typeof scan>>): void {
 
 async function printMcpAudit(r: Awaited<ReturnType<typeof scan>>): Promise<void> {
   const configured = await readConfiguredMcpServers();
-  console.log('\nMCP servers — configured vs actually used (all history):');
+  console.log(`\n${header('MCP servers — configured vs actually used:')}`);
   if (configured.length === 0 && r.mcpCalls.size === 0) {
-    console.log('  none configured in .claude.json · no mcp__ tool calls in logs — nothing to audit');
+    console.log(note('  none configured in .claude.json · no mcp__ tool calls in logs — nothing to audit'));
     return;
   }
   const seen = new Set<string>();
@@ -228,7 +295,7 @@ async function printMcpAudit(r: Awaited<ReturnType<typeof scan>>): Promise<void>
     seen.add(server.name);
     const calls = r.mcpCalls.get(server.name) ?? 0;
     const scope = server.scopes.includes('global') ? 'global' : `${server.scopes.length} project(s)`;
-    const flag = calls === 0 ? '  ← dead weight: loaded every session, never called' : '';
+    const flag = calls === 0 ? warn('  ← dead weight: loaded every session, never called') : '';
     console.log(`  ${server.name.padEnd(32)} ${scope.padEnd(14)} ${fmt(calls).padStart(8)} calls${flag}`);
   }
   for (const [name, calls] of [...r.mcpCalls.entries()].sort((a, b) => b[1] - a[1])) {
