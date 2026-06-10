@@ -27,6 +27,28 @@ export interface RepeatedRead {
   wastedTokens: number;
 }
 
+export interface CacheExpiryEvent {
+  sessionId: string;
+  project: string;
+  /** when the session resumed after the idle gap */
+  timestamp: string;
+  gapMinutes: number;
+  /** TTL the session's cache entries had when the gap started */
+  ttl: '5m' | '1h';
+  /** cache_creation tokens spent on the first turn after the gap — the re-creation bill */
+  recreationTokens: number;
+}
+
+export interface CacheAnalysis {
+  /** idle gaps longer than the live TTL — each one means the cache died and was re-billed */
+  expiryEvents: number;
+  /** cache_creation tokens spent on first turns after expiry gaps */
+  recreationTokens: number;
+  /** subset of recreationTokens where gap ≤ 1h and TTL was 5m — what a 1h TTL would have saved (#46829) */
+  avoidableWith1h: number;
+  topEvents: CacheExpiryEvent[];
+}
+
 export interface ScanResult {
   files: number;
   bytes: number;
@@ -38,6 +60,7 @@ export interface ScanResult {
   byModel: Map<string, TokenTotals>;
   tools: ToolAttribution[];
   repeatedReads: RepeatedRead[];
+  cache: CacheAnalysis;
 }
 
 export function emptyTotals(): TokenTotals {
@@ -88,16 +111,26 @@ export async function scan(root: string): Promise<ScanResult> {
   const toolAgg = new Map<string, { calls: number; addedTokens: number; residencyCost: number }>();
   const readAgg = new Map<string, { reads: number; tokensPerRead: number[] }>();
   const sessions = new Set<string>();
+  const cacheEvents: CacheExpiryEvent[] = [];
   let assistantTurns = 0;
   let bytes = 0;
 
   for (const file of files) {
     bytes += file.sizeBytes;
     await scanFile(file, {
-      stats, totals, subagentTotals, byModel, toolAgg, readAgg, sessions,
+      stats, totals, subagentTotals, byModel, toolAgg, readAgg, sessions, cacheEvents,
       onTurn: () => assistantTurns++,
     });
   }
+
+  const cache: CacheAnalysis = {
+    expiryEvents: cacheEvents.length,
+    recreationTokens: cacheEvents.reduce((s, e) => s + e.recreationTokens, 0),
+    avoidableWith1h: cacheEvents
+      .filter((e) => e.ttl === '5m' && e.gapMinutes <= 60)
+      .reduce((s, e) => s + e.recreationTokens, 0),
+    topEvents: [...cacheEvents].sort((a, b) => b.recreationTokens - a.recreationTokens).slice(0, 10),
+  };
 
   const tools: ToolAttribution[] = [...toolAgg.entries()]
     .map(([name, a]) => ({ name, ...a }))
@@ -115,7 +148,7 @@ export async function scan(root: string): Promise<ScanResult> {
   return {
     files: files.length, bytes, stats,
     sessions: sessions.size, assistantTurns,
-    totals, subagentTotals, byModel, tools, repeatedReads,
+    totals, subagentTotals, byModel, tools, repeatedReads, cache,
   };
 }
 
@@ -127,7 +160,17 @@ interface FileScanContext {
   toolAgg: Map<string, { calls: number; addedTokens: number; residencyCost: number }>;
   readAgg: Map<string, { reads: number; tokensPerRead: number[] }>;
   sessions: Set<string>;
+  cacheEvents: CacheExpiryEvent[];
   onTurn: () => void;
+}
+
+const TTL_5M_MS = 5 * 60 * 1000;
+const TTL_1H_MS = 60 * 60 * 1000;
+
+function cacheCreationTotal(u: Usage): number {
+  const cc = u.cache_creation;
+  if (cc) return (cc.ephemeral_5m_input_tokens ?? 0) + (cc.ephemeral_1h_input_tokens ?? 0);
+  return u.cache_creation_input_tokens ?? 0;
 }
 
 async function scanFile(file: SessionFile, ctx: FileScanContext): Promise<void> {
@@ -137,6 +180,10 @@ async function scanFile(file: SessionFile, ctx: FileScanContext): Promise<void> 
   const pending: PendingResult[] = [];
   const seenUsage = new Set<string>();
   let turn = 0;
+  let prevTurnTs: number | null = null;
+  // TTL of the cache entries this session has been writing; reads refresh a TTL,
+  // they don't change it, so the mode only moves 5m → 1h when a 1h write appears
+  let ttlMode: '5m' | '1h' = '5m';
 
   for await (const record of parseSessionFile(file.path, ctx.stats)) {
     if (record.sessionId) ctx.sessions.add(record.sessionId);
@@ -165,6 +212,30 @@ async function scanFile(file: SessionFile, ctx: FileScanContext): Promise<void> 
           seenUsage.add(usageKey);
           turn++;
           ctx.onTurn();
+
+          const ts = record.timestamp ? Date.parse(record.timestamp) : NaN;
+          if (!Number.isNaN(ts)) {
+            if (prevTurnTs !== null) {
+              const gapMs = ts - prevTurnTs;
+              const ttlMs = ttlMode === '1h' ? TTL_1H_MS : TTL_5M_MS;
+              if (gapMs > ttlMs) {
+                const recreation = cacheCreationTotal(msg.usage);
+                if (recreation > 0) {
+                  ctx.cacheEvents.push({
+                    sessionId: record.sessionId ?? '?',
+                    project: file.project,
+                    timestamp: record.timestamp ?? '',
+                    gapMinutes: Math.round(gapMs / 60000),
+                    ttl: ttlMode,
+                    recreationTokens: recreation,
+                  });
+                }
+              }
+            }
+            prevTurnTs = ts;
+          }
+          if ((msg.usage.cache_creation?.ephemeral_1h_input_tokens ?? 0) > 0) ttlMode = '1h';
+
           addUsage(ctx.totals, msg.usage);
           if (file.isSubagent) addUsage(ctx.subagentTotals, msg.usage);
           if (msg.model) {

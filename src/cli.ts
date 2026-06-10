@@ -53,6 +53,17 @@ async function main(): Promise<void> {
   for (const rr of r.repeatedReads.slice(0, 10)) {
     console.log(`  ${String(rr.reads).padStart(3)}× ${shorten(rr.filePath, 70).padEnd(72)} ~${fmt(rr.wastedTokens).padStart(10)} tok wasted`);
   }
+
+  const c = r.cache;
+  console.log('\ncache expiry (idle gap > TTL → cache died, you paid to rebuild it):');
+  console.log(`  expiry events                ${fmt(c.expiryEvents).padStart(12)}`);
+  console.log(`  rebuilt after idle           ${fmt(c.recreationTokens).padStart(12)} tok`);
+  console.log(`  avoidable with 1h TTL        ${fmt(c.avoidableWith1h).padStart(12)} tok  (#46829)`);
+  console.log('  top idle burns:');
+  for (const e of c.topEvents.slice(0, 8)) {
+    const when = e.timestamp.slice(0, 16).replace('T', ' ');
+    console.log(`    ${when}  idle ${gapHuman(e.gapMinutes).padStart(8)}  ttl ${e.ttl}  rebuild ${fmt(e.recreationTokens).padStart(10)} tok  ${e.project}`);
+  }
   console.log();
 }
 
@@ -67,6 +78,12 @@ function printTotals(t: TokenTotals): void {
 
 function shorten(p: string, max: number): string {
   return p.length <= max ? p : '…' + p.slice(-(max - 1));
+}
+
+function gapHuman(minutes: number): string {
+  if (minutes < 60) return `${minutes}m`;
+  if (minutes < 60 * 24) return `${(minutes / 60).toFixed(1)}h`;
+  return `${(minutes / 60 / 24).toFixed(1)}d`;
 }
 
 main().catch((err) => {
