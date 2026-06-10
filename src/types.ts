@@ -51,6 +51,10 @@ export interface LogRecord {
   gitBranch?: string;
   version?: string;
   isSidechain?: boolean;
+  /** set on user records that carry a /compact summary (older log versions) */
+  isCompactSummary?: boolean;
+  /** e.g. "compact_boundary" on system records (newer log versions) */
+  subtype?: string;
   message?: LogMessage;
 }
 

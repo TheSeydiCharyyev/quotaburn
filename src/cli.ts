@@ -42,7 +42,7 @@ async function main(): Promise<void> {
   }
 
   const totalResidency = r.tools.reduce((s, t) => s + t.residencyCost, 0);
-  console.log('\ntop context eaters (residency-weighted — tokens added × turns they stayed):');
+  console.log(`\ntop context eaters (residency-weighted — tokens added × turns they stayed · ${r.contextResets} context resets detected):`);
   for (const t of r.tools.slice(0, 12)) {
     console.log(
       `  ${bar(t.residencyCost, totalResidency)} ${pct(t.residencyCost, totalResidency).padStart(6)}  ` +

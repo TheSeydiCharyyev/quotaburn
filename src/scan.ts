@@ -85,6 +85,8 @@ export interface ScanResult {
   /** calls per MCP server name (the <server> in mcp__<server>__<tool>) */
   mcpCalls: Map<string, number>;
   subagentGroups: SubagentGroup[];
+  /** compaction/context-reset boundaries found (markers + context-drop heuristic) */
+  contextResets: number;
 }
 
 export function emptyTotals(): TokenTotals {
@@ -140,6 +142,7 @@ export async function scan(root: string): Promise<ScanResult> {
   const mcpCalls = new Map<string, number>();
   let assistantTurns = 0;
   let bytes = 0;
+  let contextResets = 0;
 
   const groups = new Map<string, SubagentGroup>();
 
@@ -148,6 +151,7 @@ export async function scan(root: string): Promise<ScanResult> {
     const fileResult = await scanFile(file, {
       stats, totals, subagentTotals, byModel, toolAgg, readAgg, sessions, cacheEvents, startups, mcpCalls,
       onTurn: () => assistantTurns++,
+      onContextReset: () => contextResets++,
     });
 
     if (file.isSubagent) {
@@ -197,6 +201,7 @@ export async function scan(root: string): Promise<ScanResult> {
     files: files.length, bytes, stats,
     sessions: sessions.size, assistantTurns,
     totals, subagentTotals, byModel, tools, repeatedReads, cache, startups, mcpCalls, subagentGroups,
+    contextResets,
   };
 }
 
@@ -220,7 +225,11 @@ interface FileScanContext {
   startups: SessionStartup[];
   mcpCalls: Map<string, number>;
   onTurn: () => void;
+  onContextReset: () => void;
 }
+
+/** context shrank to less than half of a ≥80k base — almost certainly a compaction/reset */
+const RESET_MIN_BASE_TOKENS = 80_000;
 
 const TTL_5M_MS = 5 * 60 * 1000;
 const TTL_1H_MS = 60 * 60 * 1000;
@@ -248,12 +257,36 @@ async function scanFile(
   let firstTimestamp: string | null = null;
   let turn = 0;
   let prevTurnTs: number | null = null;
+  let prevCtxSize = 0;
+
+  // a compaction/reset boundary means earlier tool results left the context:
+  // close out their residency up to the given turn and stop charging them
+  const settleResidency = (uptoTurn: number): void => {
+    for (const p of pending) {
+      const agg = ctx.toolAgg.get(p.displayName);
+      if (!agg) continue;
+      agg.addedTokens += p.tokens;
+      agg.residencyCost += p.tokens * Math.max(0, uptoTurn - p.turnAdded);
+    }
+    pending.length = 0;
+  };
   // TTL of the cache entries this session has been writing; reads refresh a TTL,
   // they don't change it, so the mode only moves 5m → 1h when a 1h write appears
   let ttlMode: '5m' | '1h' = '5m';
 
   for await (const record of parseSessionFile(file.path, ctx.stats)) {
     if (record.sessionId) ctx.sessions.add(record.sessionId);
+
+    const isCompactMarker =
+      record.type === 'summary' ||
+      (record.type === 'user' && record.isCompactSummary === true) ||
+      (record.type === 'system' && record.subtype === 'compact_boundary');
+    if (isCompactMarker) {
+      settleResidency(turn);
+      prevCtxSize = 0;
+      ctx.onContextReset();
+      continue;
+    }
 
     if (record.type === 'assistant' && record.message) {
       const msg = record.message;
@@ -294,6 +327,18 @@ async function scanFile(
           }
         } else {
           seenUsage.set(usageKey, msg.usage.output_tokens ?? 0);
+
+          // heuristic reset detection: context size collapsed vs the previous turn
+          const ctxSize =
+            (msg.usage.input_tokens ?? 0) +
+            (msg.usage.cache_read_input_tokens ?? 0) +
+            cacheCreationTotal(msg.usage);
+          if (prevCtxSize >= RESET_MIN_BASE_TOKENS && ctxSize < prevCtxSize / 2) {
+            settleResidency(turn);
+            ctx.onContextReset();
+          }
+          prevCtxSize = ctxSize;
+
           turn++;
           ctx.onTurn();
 
@@ -361,14 +406,9 @@ async function scanFile(
     }
   }
 
-  // residency: a result added at turn i is re-sent on every later turn of the session.
-  // v0 ignores /compact and context resets — numbers are an upper bound; --explain will say so.
-  for (const p of pending) {
-    const agg = ctx.toolAgg.get(p.displayName);
-    if (!agg) continue;
-    agg.addedTokens += p.tokens;
-    agg.residencyCost += p.tokens * Math.max(0, turn - p.turnAdded);
-  }
+  // residency: a result added at turn i is re-sent on every later turn of the session,
+  // until a compaction/reset boundary (handled above) or the session ends here
+  settleResidency(turn);
 
   return { totals: fileTotals, firstTimestamp };
 }
