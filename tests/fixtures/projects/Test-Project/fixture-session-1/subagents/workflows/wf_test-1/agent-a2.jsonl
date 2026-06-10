@@ -1,0 +1,1 @@
+{"type":"assistant","sessionId":"fixture-session-1","timestamp":"2026-01-01T11:00:00.000Z","uuid":"wa1","requestId":"r20","message":{"id":"m20","model":"claude-fable-5","role":"assistant","content":[{"type":"text","text":"result"}],"usage":{"input_tokens":1,"output_tokens":30,"cache_read_input_tokens":5,"cache_creation_input_tokens":0}}}
