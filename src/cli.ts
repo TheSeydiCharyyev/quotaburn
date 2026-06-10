@@ -1,11 +1,15 @@
 #!/usr/bin/env node
+import { createRequire } from 'node:module';
+import { EXPLAIN, HELP, parseArgs } from './args.js';
 import { claudeProjectsDir } from './discover.js';
 import { readConfiguredMcpServers } from './mcpconfig.js';
 import {
   CACHE_READ_MULT, CACHE_WRITE_1H_MULT, CACHE_WRITE_5M_MULT,
   costOfTotals, resolvePricing, type CostBreakdown,
 } from './pricing.js';
-import { scan, type TokenTotals } from './scan.js';
+import { scan, type ScanResult, type TokenTotals } from './scan.js';
+
+const pkg = createRequire(import.meta.url)('../package.json') as { version: string };
 
 const fmt = (n: number): string => n.toLocaleString('en-US');
 
@@ -19,20 +23,43 @@ function bar(part: number, whole: number, width = 20): string {
 }
 
 async function main(): Promise<void> {
+  const parsed = parseArgs(process.argv.slice(2));
+  if ('error' in parsed) {
+    console.error(`ccwhy: ${parsed.error}`);
+    process.exitCode = 1;
+    return;
+  }
+  const args = parsed.args;
+  if (args.help) { console.log(HELP); return; }
+  if (args.version) { console.log(pkg.version); return; }
+  if (args.explain) { console.log(EXPLAIN); return; }
+
   const root = claudeProjectsDir();
   const started = performance.now();
-  const r = await scan(root);
+  const r = await scan(root, {
+    cutoffMs: args.days !== undefined ? Date.now() - args.days * 86_400_000 : undefined,
+    projectFilter: args.project,
+  });
 
   if (r.files === 0) {
-    console.error(`No Claude Code session logs found under ${root}`);
+    console.error(`No Claude Code session logs found under ${root}${args.project ? ` for project "${args.project}"` : ''}`);
     process.exitCode = 1;
+    return;
+  }
+
+  if (args.json) {
+    console.log(JSON.stringify(toJson(r, root), null, 2));
     return;
   }
 
   const elapsed = ((performance.now() - started) / 1000).toFixed(1);
   const mb = (r.bytes / 1024 / 1024).toFixed(0);
+  const scope = [
+    args.days !== undefined ? `last ${args.days} days` : 'full history',
+    args.project ? `project: ${args.project}` : null,
+  ].filter(Boolean).join(' · ');
 
-  console.log(`\nccwhy v0.0.1 — scan of ${root}`);
+  console.log(`\nccwhy v${pkg.version} — ${scope} — ${root}`);
   console.log(`${r.files} files (${mb} MB) · ${fmt(r.stats.lines)} lines · ${fmt(r.stats.skipped)} skipped · ${elapsed}s\n`);
 
   console.log(`sessions: ${r.sessions} · assistant turns: ${fmt(r.assistantTurns)}`);
@@ -104,6 +131,28 @@ function printCost(r: Awaited<ReturnType<typeof scan>>): void {
   console.log(`    input (uncached)${usd(sum.input)}`);
   if (unknown.length > 0) console.log(`  excluded (no pricing data): ${unknown.join(', ')}`);
   console.log('  note: subscription plans do not bill per token — this is the API-price value of your usage\n');
+}
+
+function toJson(r: ScanResult, root: string): Record<string, unknown> {
+  return {
+    ccwhyVersion: pkg.version,
+    root,
+    files: r.files,
+    bytes: r.bytes,
+    parse: r.stats,
+    sessions: r.sessions,
+    assistantTurns: r.assistantTurns,
+    contextResets: r.contextResets,
+    totals: r.totals,
+    subagentTotals: r.subagentTotals,
+    byModel: Object.fromEntries(r.byModel),
+    tools: r.tools,
+    repeatedReads: r.repeatedReads,
+    cache: r.cache,
+    startups: r.startups,
+    mcpCalls: Object.fromEntries(r.mcpCalls),
+    subagentGroups: r.subagentGroups,
+  };
 }
 
 function printTotals(t: TokenTotals): void {

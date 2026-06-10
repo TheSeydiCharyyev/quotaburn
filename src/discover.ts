@@ -34,6 +34,7 @@ async function walk(dir: string, found: SessionFile[], root: string): Promise<vo
       const subagentsIdx = parts.indexOf('subagents');
       const isSubagent = subagentsIdx !== -1;
       const workflowsIdx = parts.indexOf('workflows');
+      const stat = statSync(full);
       found.push({
         path: full,
         project: parts[0] ?? '',
@@ -41,7 +42,8 @@ async function walk(dir: string, found: SessionFile[], root: string): Promise<vo
         parentSession: isSubagent ? parts[subagentsIdx - 1] : undefined,
         workflowId: workflowsIdx !== -1 ? parts[workflowsIdx + 1] : undefined,
         isAgentTranscript: isSubagent && entry.name.startsWith('agent-'),
-        sizeBytes: statSync(full).size,
+        sizeBytes: stat.size,
+        mtimeMs: stat.mtimeMs,
       });
     }
   }

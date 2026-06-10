@@ -132,8 +132,28 @@ interface PendingResult {
   displayName: string;
 }
 
-export async function scan(root: string): Promise<ScanResult> {
-  const files = await discoverSessionFiles(root);
+export interface ScanOptions {
+  /** only count records at or after this time */
+  cutoffMs?: number;
+  /** only scan projects whose encoded dir name contains this (already normalized) */
+  projectFilter?: string;
+}
+
+/** Claude Code encodes project paths into dir names: C:\Users\me → C--Users-me */
+export function normalizeProjectFilter(input: string): string {
+  return input.replace(/[:\\/. ]/g, '-').toLowerCase();
+}
+
+export async function scan(root: string, options: ScanOptions = {}): Promise<ScanResult> {
+  let files = await discoverSessionFiles(root);
+  if (options.projectFilter) {
+    const needle = normalizeProjectFilter(options.projectFilter);
+    files = files.filter((f) => f.project.toLowerCase().includes(needle));
+  }
+  if (options.cutoffMs !== undefined) {
+    // mtime older than the cutoff ⇒ every record in the file is older too
+    files = files.filter((f) => f.mtimeMs >= options.cutoffMs!);
+  }
   const stats: ParseStats = { lines: 0, parsed: 0, skipped: 0 };
   const totals = emptyTotals();
   const subagentTotals = emptyTotals();
@@ -154,6 +174,7 @@ export async function scan(root: string): Promise<ScanResult> {
     bytes += file.sizeBytes;
     const fileResult = await scanFile(file, {
       stats, totals, subagentTotals, byModel, toolAgg, readAgg, sessions, cacheEvents, startups, mcpCalls,
+      cutoffMs: options.cutoffMs,
       onTurn: () => assistantTurns++,
       onContextReset: () => contextResets++,
     });
@@ -234,6 +255,7 @@ interface FileScanContext {
   cacheEvents: CacheExpiryEvent[];
   startups: SessionStartup[];
   mcpCalls: Map<string, number>;
+  cutoffMs?: number;
   onTurn: () => void;
   onContextReset: () => void;
 }
@@ -285,6 +307,15 @@ async function scanFile(
   let ttlMode: '5m' | '1h' = '5m';
 
   for await (const record of parseSessionFile(file.path, ctx.stats)) {
+    // --days window: drop pre-cutoff records entirely; their tool_use ids are never
+    // registered, so matching tool_results fall out as orphans — consistent exclusion
+    if (
+      ctx.cutoffMs !== undefined &&
+      record.timestamp &&
+      Date.parse(record.timestamp) < ctx.cutoffMs
+    ) {
+      continue;
+    }
     if (record.sessionId) ctx.sessions.add(record.sessionId);
 
     const isCompactMarker =

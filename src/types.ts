@@ -72,4 +72,5 @@ export interface SessionFile {
   /** True for agent-*.jsonl transcripts (excludes workflow journal files) */
   isAgentTranscript: boolean;
   sizeBytes: number;
+  mtimeMs: number;
 }
