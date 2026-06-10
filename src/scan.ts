@@ -49,6 +49,15 @@ export interface CacheAnalysis {
   topEvents: CacheExpiryEvent[];
 }
 
+/** Context composition of a main session's first assistant turn — the cost of just showing up. */
+export interface SessionStartup {
+  project: string;
+  sessionId: string;
+  inputUncached: number;
+  cacheRead: number;
+  cacheCreation: number;
+}
+
 export interface ScanResult {
   files: number;
   bytes: number;
@@ -61,6 +70,9 @@ export interface ScanResult {
   tools: ToolAttribution[];
   repeatedReads: RepeatedRead[];
   cache: CacheAnalysis;
+  startups: SessionStartup[];
+  /** calls per MCP server name (the <server> in mcp__<server>__<tool>) */
+  mcpCalls: Map<string, number>;
 }
 
 export function emptyTotals(): TokenTotals {
@@ -112,13 +124,15 @@ export async function scan(root: string): Promise<ScanResult> {
   const readAgg = new Map<string, { reads: number; tokensPerRead: number[] }>();
   const sessions = new Set<string>();
   const cacheEvents: CacheExpiryEvent[] = [];
+  const startups: SessionStartup[] = [];
+  const mcpCalls = new Map<string, number>();
   let assistantTurns = 0;
   let bytes = 0;
 
   for (const file of files) {
     bytes += file.sizeBytes;
     await scanFile(file, {
-      stats, totals, subagentTotals, byModel, toolAgg, readAgg, sessions, cacheEvents,
+      stats, totals, subagentTotals, byModel, toolAgg, readAgg, sessions, cacheEvents, startups, mcpCalls,
       onTurn: () => assistantTurns++,
     });
   }
@@ -148,7 +162,7 @@ export async function scan(root: string): Promise<ScanResult> {
   return {
     files: files.length, bytes, stats,
     sessions: sessions.size, assistantTurns,
-    totals, subagentTotals, byModel, tools, repeatedReads, cache,
+    totals, subagentTotals, byModel, tools, repeatedReads, cache, startups, mcpCalls,
   };
 }
 
@@ -161,6 +175,8 @@ interface FileScanContext {
   readAgg: Map<string, { reads: number; tokensPerRead: number[] }>;
   sessions: Set<string>;
   cacheEvents: CacheExpiryEvent[];
+  startups: SessionStartup[];
+  mcpCalls: Map<string, number>;
   onTurn: () => void;
 }
 
@@ -199,6 +215,10 @@ async function scanFile(file: SessionFile, ctx: FileScanContext): Promise<void> 
           const agg = ctx.toolAgg.get(name) ?? { calls: 0, addedTokens: 0, residencyCost: 0 };
           agg.calls++;
           ctx.toolAgg.set(name, agg);
+          if (tu.name.startsWith('mcp__')) {
+            const server = tu.name.split('__')[1] ?? tu.name;
+            ctx.mcpCalls.set(server, (ctx.mcpCalls.get(server) ?? 0) + 1);
+          }
           if (tu.name === 'Read' && typeof tu.input?.['file_path'] === 'string') {
             toolUseReadPath.set(tu.id, tu.input['file_path'] as string);
           }
@@ -235,6 +255,16 @@ async function scanFile(file: SessionFile, ctx: FileScanContext): Promise<void> 
             prevTurnTs = ts;
           }
           if ((msg.usage.cache_creation?.ephemeral_1h_input_tokens ?? 0) > 0) ttlMode = '1h';
+
+          if (turn === 1 && !file.isSubagent) {
+            ctx.startups.push({
+              project: file.project,
+              sessionId: record.sessionId ?? '?',
+              inputUncached: msg.usage.input_tokens ?? 0,
+              cacheRead: msg.usage.cache_read_input_tokens ?? 0,
+              cacheCreation: cacheCreationTotal(msg.usage),
+            });
+          }
 
           addUsage(ctx.totals, msg.usage);
           if (file.isSubagent) addUsage(ctx.subagentTotals, msg.usage);

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { claudeProjectsDir } from './discover.js';
+import { readConfiguredMcpServers } from './mcpconfig.js';
 import { scan, type TokenTotals } from './scan.js';
 
 const fmt = (n: number): string => n.toLocaleString('en-US');
@@ -54,6 +55,9 @@ async function main(): Promise<void> {
     console.log(`  ${String(rr.reads).padStart(3)}× ${shorten(rr.filePath, 70).padEnd(72)} ~${fmt(rr.wastedTokens).padStart(10)} tok wasted`);
   }
 
+  printStartupTax(r);
+  await printMcpAudit(r);
+
   const c = r.cache;
   console.log('\ncache expiry (idle gap > TTL → cache died, you paid to rebuild it):');
   console.log(`  expiry events                ${fmt(c.expiryEvents).padStart(12)}`);
@@ -84,6 +88,48 @@ function gapHuman(minutes: number): string {
   if (minutes < 60) return `${minutes}m`;
   if (minutes < 60 * 24) return `${(minutes / 60).toFixed(1)}h`;
   return `${(minutes / 60 / 24).toFixed(1)}d`;
+}
+
+function percentile(sorted: number[], p: number): number {
+  if (sorted.length === 0) return 0;
+  const idx = Math.min(sorted.length - 1, Math.floor((p / 100) * sorted.length));
+  return sorted[idx] ?? 0;
+}
+
+function printStartupTax(r: Awaited<ReturnType<typeof scan>>): void {
+  const sizes = r.startups
+    .map((s) => s.inputUncached + s.cacheRead + s.cacheCreation)
+    .sort((a, b) => a - b);
+  // a fresh start writes the whole standing config into cache; a warm start mostly reads it back
+  const fresh = r.startups.filter((s) => s.cacheRead < 10_000);
+  const freshWrites = fresh.reduce((s, x) => s + x.cacheCreation, 0);
+
+  console.log('\nsession startup tax (context already spent before your first word does anything):');
+  console.log(`  main sessions analyzed       ${fmt(sizes.length).padStart(12)}`);
+  console.log(`  context at turn 1            median ${fmt(percentile(sizes, 50))} · p90 ${fmt(percentile(sizes, 90))} tok`);
+  console.log(`  fresh starts (cold cache)    ${fmt(fresh.length).padStart(12)}  paying ${fmt(freshWrites)} tok of cache writes total`);
+}
+
+async function printMcpAudit(r: Awaited<ReturnType<typeof scan>>): Promise<void> {
+  const configured = await readConfiguredMcpServers();
+  console.log('\nMCP servers — configured vs actually used (all history):');
+  if (configured.length === 0 && r.mcpCalls.size === 0) {
+    console.log('  none configured in .claude.json · no mcp__ tool calls in logs — nothing to audit');
+    return;
+  }
+  const seen = new Set<string>();
+  for (const server of configured) {
+    seen.add(server.name);
+    const calls = r.mcpCalls.get(server.name) ?? 0;
+    const scope = server.scopes.includes('global') ? 'global' : `${server.scopes.length} project(s)`;
+    const flag = calls === 0 ? '  ← dead weight: loaded every session, never called' : '';
+    console.log(`  ${server.name.padEnd(32)} ${scope.padEnd(14)} ${fmt(calls).padStart(8)} calls${flag}`);
+  }
+  for (const [name, calls] of [...r.mcpCalls.entries()].sort((a, b) => b[1] - a[1])) {
+    if (!seen.has(name)) {
+      console.log(`  ${name.padEnd(32)} ${'(not in config)'.padEnd(14)} ${fmt(calls).padStart(8)} calls`);
+    }
+  }
 }
 
 main().catch((err) => {
