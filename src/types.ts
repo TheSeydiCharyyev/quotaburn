@@ -61,5 +61,11 @@ export interface SessionFile {
   project: string;
   /** True when the file is a subagent/workflow transcript rather than a main session */
   isSubagent: boolean;
+  /** Session ID of the main session this subagent transcript belongs to */
+  parentSession?: string;
+  /** Workflow run ID (wf_*) when the transcript belongs to a workflow agent */
+  workflowId?: string;
+  /** True for agent-*.jsonl transcripts (excludes workflow journal files) */
+  isAgentTranscript: boolean;
   sizeBytes: number;
 }

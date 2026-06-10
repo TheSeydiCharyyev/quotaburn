@@ -58,6 +58,17 @@ export interface SessionStartup {
   cacheCreation: number;
 }
 
+/** Aggregated spend of one workflow run or one session's standalone subagents. */
+export interface SubagentGroup {
+  kind: 'workflow' | 'subagents';
+  /** wf_* run id, or the parent session id for standalone subagents */
+  id: string;
+  project: string;
+  agents: number;
+  totals: TokenTotals;
+  firstTimestamp: string;
+}
+
 export interface ScanResult {
   files: number;
   bytes: number;
@@ -73,6 +84,7 @@ export interface ScanResult {
   startups: SessionStartup[];
   /** calls per MCP server name (the <server> in mcp__<server>__<tool>) */
   mcpCalls: Map<string, number>;
+  subagentGroups: SubagentGroup[];
 }
 
 export function emptyTotals(): TokenTotals {
@@ -129,13 +141,35 @@ export async function scan(root: string): Promise<ScanResult> {
   let assistantTurns = 0;
   let bytes = 0;
 
+  const groups = new Map<string, SubagentGroup>();
+
   for (const file of files) {
     bytes += file.sizeBytes;
-    await scanFile(file, {
+    const fileResult = await scanFile(file, {
       stats, totals, subagentTotals, byModel, toolAgg, readAgg, sessions, cacheEvents, startups, mcpCalls,
       onTurn: () => assistantTurns++,
     });
+
+    if (file.isSubagent) {
+      const key = file.workflowId ? `wf:${file.workflowId}` : `sa:${file.parentSession ?? '?'}`;
+      const group = groups.get(key) ?? {
+        kind: file.workflowId ? ('workflow' as const) : ('subagents' as const),
+        id: file.workflowId ?? file.parentSession ?? '?',
+        project: file.project,
+        agents: 0,
+        totals: emptyTotals(),
+        firstTimestamp: '',
+      };
+      if (file.isAgentTranscript) group.agents++;
+      mergeTotals(group.totals, fileResult.totals);
+      if (fileResult.firstTimestamp && (!group.firstTimestamp || fileResult.firstTimestamp < group.firstTimestamp)) {
+        group.firstTimestamp = fileResult.firstTimestamp;
+      }
+      groups.set(key, group);
+    }
   }
+
+  const subagentGroups = [...groups.values()].sort((a, b) => b.totals.output - a.totals.output);
 
   const cache: CacheAnalysis = {
     expiryEvents: cacheEvents.length,
@@ -162,8 +196,16 @@ export async function scan(root: string): Promise<ScanResult> {
   return {
     files: files.length, bytes, stats,
     sessions: sessions.size, assistantTurns,
-    totals, subagentTotals, byModel, tools, repeatedReads, cache, startups, mcpCalls,
+    totals, subagentTotals, byModel, tools, repeatedReads, cache, startups, mcpCalls, subagentGroups,
   };
+}
+
+function mergeTotals(into: TokenTotals, from: TokenTotals): void {
+  into.output += from.output;
+  into.inputUncached += from.inputUncached;
+  into.cacheRead += from.cacheRead;
+  into.cacheCreation5m += from.cacheCreation5m;
+  into.cacheCreation1h += from.cacheCreation1h;
 }
 
 interface FileScanContext {
@@ -189,12 +231,21 @@ function cacheCreationTotal(u: Usage): number {
   return u.cache_creation_input_tokens ?? 0;
 }
 
-async function scanFile(file: SessionFile, ctx: FileScanContext): Promise<void> {
+async function scanFile(
+  file: SessionFile,
+  ctx: FileScanContext,
+): Promise<{ totals: TokenTotals; firstTimestamp: string | null }> {
   // per-file state: each .jsonl is one context window (main session or subagent)
   const toolUseNames = new Map<string, string>();
   const toolUseReadPath = new Map<string, string>();
   const pending: PendingResult[] = [];
-  const seenUsage = new Set<string>();
+  // message.id+requestId → highest output_tokens seen so far for that message.
+  // Streamed messages are logged as several records with PROGRESSIVE usage:
+  // output_tokens grows per record while input/cache fields stay constant, so
+  // input-side counts once per message and output-side accumulates deltas.
+  const seenUsage = new Map<string, number>();
+  const fileTotals = emptyTotals();
+  let firstTimestamp: string | null = null;
   let turn = 0;
   let prevTurnTs: number | null = null;
   // TTL of the cache entries this session has been writing; reads refresh a TTL,
@@ -225,13 +276,29 @@ async function scanFile(file: SessionFile, ctx: FileScanContext): Promise<void> 
         }
       }
       if (msg.usage) {
-        // one assistant message can span several JSONL records sharing message.id —
-        // count its usage only once (same dedup problem ccusage solves)
         const usageKey = `${msg.id ?? record.uuid}:${record.requestId ?? ''}`;
-        if (!seenUsage.has(usageKey)) {
-          seenUsage.add(usageKey);
+        const prevOutput = seenUsage.get(usageKey);
+        if (prevOutput !== undefined) {
+          // later record of an already-counted message: take only the output growth
+          const current = msg.usage.output_tokens ?? 0;
+          if (current > prevOutput) {
+            const delta = current - prevOutput;
+            seenUsage.set(usageKey, current);
+            ctx.totals.output += delta;
+            fileTotals.output += delta;
+            if (file.isSubagent) ctx.subagentTotals.output += delta;
+            if (msg.model) {
+              const m = ctx.byModel.get(msg.model);
+              if (m) m.output += delta;
+            }
+          }
+        } else {
+          seenUsage.set(usageKey, msg.usage.output_tokens ?? 0);
           turn++;
           ctx.onTurn();
+
+          if (firstTimestamp === null && record.timestamp) firstTimestamp = record.timestamp;
+          addUsage(fileTotals, msg.usage);
 
           const ts = record.timestamp ? Date.parse(record.timestamp) : NaN;
           if (!Number.isNaN(ts)) {
@@ -302,4 +369,6 @@ async function scanFile(file: SessionFile, ctx: FileScanContext): Promise<void> 
     agg.addedTokens += p.tokens;
     agg.residencyCost += p.tokens * Math.max(0, turn - p.turnAdded);
   }
+
+  return { totals: fileTotals, firstTimestamp };
 }

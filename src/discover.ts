@@ -31,10 +31,16 @@ async function walk(dir: string, found: SessionFile[], root: string): Promise<vo
     } else if (entry.isFile() && entry.name.endsWith('.jsonl')) {
       const rel = relative(root, full);
       const parts = rel.split(sep);
+      const subagentsIdx = parts.indexOf('subagents');
+      const isSubagent = subagentsIdx !== -1;
+      const workflowsIdx = parts.indexOf('workflows');
       found.push({
         path: full,
         project: parts[0] ?? '',
-        isSubagent: parts.includes('subagents'),
+        isSubagent,
+        parentSession: isSubagent ? parts[subagentsIdx - 1] : undefined,
+        workflowId: workflowsIdx !== -1 ? parts[workflowsIdx + 1] : undefined,
+        isAgentTranscript: isSubagent && entry.name.startsWith('agent-'),
         sizeBytes: statSync(full).size,
       });
     }

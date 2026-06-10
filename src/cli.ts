@@ -57,6 +57,7 @@ async function main(): Promise<void> {
 
   printStartupTax(r);
   await printMcpAudit(r);
+  printSubagents(r);
 
   const c = r.cache;
   console.log('\ncache expiry (idle gap > TTL → cache died, you paid to rebuild it):');
@@ -108,6 +109,28 @@ function printStartupTax(r: Awaited<ReturnType<typeof scan>>): void {
   console.log(`  main sessions analyzed       ${fmt(sizes.length).padStart(12)}`);
   console.log(`  context at turn 1            median ${fmt(percentile(sizes, 50))} · p90 ${fmt(percentile(sizes, 90))} tok`);
   console.log(`  fresh starts (cold cache)    ${fmt(fresh.length).padStart(12)}  paying ${fmt(freshWrites)} tok of cache writes total`);
+}
+
+function printSubagents(r: Awaited<ReturnType<typeof scan>>): void {
+  const groups = r.subagentGroups;
+  console.log('\nsubagents & workflows:');
+  if (groups.length === 0) {
+    console.log('  no subagent activity found');
+    return;
+  }
+  const workflows = groups.filter((g) => g.kind === 'workflow');
+  const standalone = groups.filter((g) => g.kind === 'subagents');
+  const agents = (gs: typeof groups): number => gs.reduce((s, g) => s + g.agents, 0);
+  console.log(`  workflow runs: ${workflows.length} (${agents(workflows)} agents) · sessions with standalone subagents: ${standalone.length} (${agents(standalone)} agents)`);
+  console.log('  top burners:');
+  for (const g of groups.slice(0, 8)) {
+    const when = g.firstTimestamp.slice(0, 10);
+    const label = g.kind === 'workflow' ? `workflow ${g.id}` : `subagents of ${g.id.slice(0, 8)}`;
+    console.log(
+      `    ${when}  ${label.padEnd(34)} ${String(g.agents).padStart(3)} agents  ` +
+      `out ${fmt(g.totals.output).padStart(10)}  cache-read ${fmt(g.totals.cacheRead).padStart(13)}  cache-write ${fmt(g.totals.cacheCreation5m + g.totals.cacheCreation1h).padStart(11)}`,
+    );
+  }
 }
 
 async function printMcpAudit(r: Awaited<ReturnType<typeof scan>>): Promise<void> {
