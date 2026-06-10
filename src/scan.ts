@@ -1,5 +1,6 @@
 import { discoverSessionFiles } from './discover.js';
 import { parseSessionFile, type ParseStats } from './parser.js';
+import { CACHE_WRITE_1H_MULT, CACHE_WRITE_5M_MULT, resolvePricing } from './pricing.js';
 import type { SessionFile, ToolResultBlock, ToolUseBlock, Usage } from './types.js';
 
 export interface TokenTotals {
@@ -37,6 +38,7 @@ export interface CacheExpiryEvent {
   ttl: '5m' | '1h';
   /** cache_creation tokens spent on the first turn after the gap — the re-creation bill */
   recreationTokens: number;
+  model?: string;
 }
 
 export interface CacheAnalysis {
@@ -46,6 +48,8 @@ export interface CacheAnalysis {
   recreationTokens: number;
   /** subset of recreationTokens where gap ≤ 1h and TTL was 5m — what a 1h TTL would have saved (#46829) */
   avoidableWith1h: number;
+  /** API-list-price cost of post-idle rebuilds (events with unknown model pricing excluded) */
+  recreationDollars: number;
   topEvents: CacheExpiryEvent[];
 }
 
@@ -181,6 +185,12 @@ export async function scan(root: string): Promise<ScanResult> {
     avoidableWith1h: cacheEvents
       .filter((e) => e.ttl === '5m' && e.gapMinutes <= 60)
       .reduce((s, e) => s + e.recreationTokens, 0),
+    recreationDollars: cacheEvents.reduce((s, e) => {
+      const p = e.model ? resolvePricing(e.model) : null;
+      if (!p) return s;
+      const mult = e.ttl === '1h' ? CACHE_WRITE_1H_MULT : CACHE_WRITE_5M_MULT;
+      return s + (e.recreationTokens / 1e6) * p.inputPerM * mult;
+    }, 0),
     topEvents: [...cacheEvents].sort((a, b) => b.recreationTokens - a.recreationTokens).slice(0, 10),
   };
 
@@ -360,6 +370,7 @@ async function scanFile(
                     gapMinutes: Math.round(gapMs / 60000),
                     ttl: ttlMode,
                     recreationTokens: recreation,
+                    model: msg.model,
                   });
                 }
               }

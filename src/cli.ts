@@ -1,6 +1,10 @@
 #!/usr/bin/env node
 import { claudeProjectsDir } from './discover.js';
 import { readConfiguredMcpServers } from './mcpconfig.js';
+import {
+  CACHE_READ_MULT, CACHE_WRITE_1H_MULT, CACHE_WRITE_5M_MULT,
+  costOfTotals, resolvePricing, type CostBreakdown,
+} from './pricing.js';
 import { scan, type TokenTotals } from './scan.js';
 
 const fmt = (n: number): string => n.toLocaleString('en-US');
@@ -35,10 +39,13 @@ async function main(): Promise<void> {
   console.log(`subagent share of output tokens: ${pct(r.subagentTotals.output, r.totals.output)}\n`);
 
   printTotals(r.totals);
+  printCost(r);
 
   console.log('by model:');
   for (const [model, t] of [...r.byModel.entries()].sort((a, b) => b[1].output - a[1].output)) {
-    console.log(`  ${model.padEnd(28)} out ${fmt(t.output).padStart(12)}   cache-read ${fmt(t.cacheRead).padStart(15)}`);
+    const p = resolvePricing(model);
+    const dollars = p ? `$${costOfTotals(t, p).total.toFixed(2)}`.padStart(10) : '         —';
+    console.log(`  ${model.padEnd(28)} out ${fmt(t.output).padStart(12)}   cache-read ${fmt(t.cacheRead).padStart(15)}  ${dollars}`);
   }
 
   const totalResidency = r.tools.reduce((s, t) => s + t.residencyCost, 0);
@@ -62,7 +69,7 @@ async function main(): Promise<void> {
   const c = r.cache;
   console.log('\ncache expiry (idle gap > TTL → cache died, you paid to rebuild it):');
   console.log(`  expiry events                ${fmt(c.expiryEvents).padStart(12)}`);
-  console.log(`  rebuilt after idle           ${fmt(c.recreationTokens).padStart(12)} tok`);
+  console.log(`  rebuilt after idle           ${fmt(c.recreationTokens).padStart(12)} tok  ≈ $${c.recreationDollars.toFixed(2)} at API prices`);
   console.log(`  avoidable with 1h TTL        ${fmt(c.avoidableWith1h).padStart(12)} tok  (#46829)`);
   console.log('  top idle burns:');
   for (const e of c.topEvents.slice(0, 8)) {
@@ -70,6 +77,33 @@ async function main(): Promise<void> {
     console.log(`    ${when}  idle ${gapHuman(e.gapMinutes).padStart(8)}  ttl ${e.ttl}  rebuild ${fmt(e.recreationTokens).padStart(10)} tok  ${e.project}`);
   }
   console.log();
+}
+
+function printCost(r: Awaited<ReturnType<typeof scan>>): void {
+  const sum: CostBreakdown = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
+  const unknown: string[] = [];
+  for (const [model, t] of r.byModel) {
+    const p = resolvePricing(model);
+    if (!p) {
+      if (t.output > 0 || t.cacheRead > 0) unknown.push(model);
+      continue;
+    }
+    const c = costOfTotals(t, p);
+    sum.input += c.input;
+    sum.output += c.output;
+    sum.cacheRead += c.cacheRead;
+    sum.cacheWrite += c.cacheWrite;
+    sum.total += c.total;
+  }
+  const usd = (n: number): string => `$${n.toFixed(2)}`.padStart(12);
+  console.log('estimated cost at API list prices:');
+  console.log(`  total             ${usd(sum.total)}`);
+  console.log(`    cache read      ${usd(sum.cacheRead)}   (${CACHE_READ_MULT}× input price)`);
+  console.log(`    cache write     ${usd(sum.cacheWrite)}   (${CACHE_WRITE_5M_MULT}× 5m / ${CACHE_WRITE_1H_MULT}× 1h)`);
+  console.log(`    output          ${usd(sum.output)}`);
+  console.log(`    input (uncached)${usd(sum.input)}`);
+  if (unknown.length > 0) console.log(`  excluded (no pricing data): ${unknown.join(', ')}`);
+  console.log('  note: subscription plans do not bill per token — this is the API-price value of your usage\n');
 }
 
 function printTotals(t: TokenTotals): void {
