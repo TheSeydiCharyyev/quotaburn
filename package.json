@@ -1,6 +1,6 @@
 {
   "name": "quotaburn",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Find out WHERE your Claude Code quota burns — per-tool attribution, cache expiry bills, repeated reads, MCP dead weight. Local logs only, zero deps.",
   "type": "module",
   "bin": {
