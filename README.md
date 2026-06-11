@@ -1,13 +1,13 @@
-# ccwhy
+# quotaburn
 
 > I ran this on my own Claude Code history: **$3,019 of API-priced usage — and 21% of it was rebuilding expired prompt cache after idle gaps.** One habit change fixes that.
 
-**[ccusage](https://github.com/ryoppippi/ccusage) tells you HOW MUCH you burned. ccwhy tells you WHY.**
+**[ccusage](https://github.com/ryoppippi/ccusage) shows how much you burned. quotaburn shows _where_ — and how to stop it.**
 
-<!-- GIF: terminal recording of `npx ccwhy` on real data goes here -->
+<!-- GIF: terminal recording of `npx quotaburn` on real data goes here -->
 
 ```
-npx ccwhy
+npx quotaburn
 ```
 
 No install, no signup, no config. Reads your local Claude Code logs and answers one question: *where did my quota actually go?*
@@ -41,7 +41,7 @@ Five reports, all from data already sitting on your disk:
 
 1. **Top context eaters** — which tools and MCP servers actually cost you, weighted by *residency*: a tool result enters the context once but gets re-sent on every later turn. 300 KB of MCP output at turn 3 of a 50-turn session costs ~47× its size.
 2. **Repeated file reads** — the same file read 35× in one session is real money.
-3. **Cache expiry** — Anthropic's prompt cache dies after 5 minutes (or 1 hour) of idle. Come back to yesterday's session and you pay to rebuild it — at 2× the input price. ccwhy shows every one of those bills.
+3. **Cache expiry** — Anthropic's prompt cache dies after 5 minutes (or 1 hour) of idle. Come back to yesterday's session and you pay to rebuild it — at 2× the input price. quotaburn shows every one of those bills.
 4. **Session startup tax** — how many tokens your system prompt + tools + skills + CLAUDE.md eat before your first word does anything, and which configured MCP servers are dead weight you load every session and never call.
 5. **Subagents & workflows** — what your background agents really consumed.
 
@@ -50,17 +50,18 @@ Plus **top quick wins**: up to three personalized recommendations, ranked by how
 ## Privacy
 
 - **Reads local files only** — your `~/.claude/projects` JSONL logs.
-- **Zero network calls. Zero telemetry. Zero dependencies.**
+- **Zero network calls. Zero telemetry. Zero dependencies. No postinstall scripts, no binary downloads.**
 - The published package is one small readable file — audit it in two minutes.
+- Windows, macOS, Linux — first-class everywhere (it's developed on Windows).
 
 ## Why their numbers are wrong and ours aren't
 
-Claude Code logs streamed messages as several records with *progressive* usage: `output_tokens` grows from chunk to chunk while input/cache fields repeat. Parsers that keep the first record undercount your output; parsers that sum every record double-count your input. ccwhy counts input once per message and accumulates output deltas to the final value. Run `npx ccwhy --explain` for the full methodology — including its honest caveats (residency is an estimate, cache rebuild numbers are an upper bound).
+Claude Code logs streamed messages as several records with *progressive* usage: `output_tokens` grows from chunk to chunk while input/cache fields repeat. Parsers that keep the first record undercount your output; parsers that sum every record double-count your input. quotaburn counts input once per message and accumulates output deltas to the final value. Run `npx quotaburn --explain` for the full methodology — including its honest caveats (residency is an estimate, cache rebuild numbers are an upper bound).
 
 ## Usage
 
 ```
-ccwhy [options]
+quotaburn [options]
 
   --days N          analyze only the last N days (default: full history)
   --project <path>  only sessions of the given project
@@ -71,13 +72,13 @@ ccwhy [options]
 ## FAQ
 
 **I'm on a Pro/Max subscription — do these dollars mean anything?**
-You don't pay per token, but your *limits* are denominated in compute. The dollar figures show the API-price value of your usage — the same flex as ccusage, plus an explanation of where it went. Cutting the waste ccwhy finds means hitting your limits later.
+You don't pay per token, but your *limits* are denominated in compute. The dollar figures show the API-price value of your usage — the same flex as ccusage, plus an explanation of where it went. Cutting the waste quotaburn finds means hitting your limits later.
 
 **Does it work on Windows?**
 First-class. It's developed on Windows and CI-tested on Windows and Linux.
 
 **How is this different from ccusage / claude-hud?**
-They answer *how much* (totals, live status bar). ccwhy answers *why* — attribution by tool, by MCP server, by habit. Use them together: they're complementary, not competing.
+They answer *how much* (totals, live status bar). quotaburn answers *where and why* — attribution by tool, by MCP server, by habit. Use them together: they're complementary, not competing.
 
 ## License
 

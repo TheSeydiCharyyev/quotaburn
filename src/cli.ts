@@ -26,7 +26,7 @@ function bar(part: number, whole: number, width = 20): string {
 async function main(): Promise<void> {
   const parsed = parseArgs(process.argv.slice(2));
   if ('error' in parsed) {
-    console.error(`ccwhy: ${parsed.error}`);
+    console.error(`quotaburn: ${parsed.error}`);
     process.exitCode = 1;
     return;
   }
@@ -43,7 +43,7 @@ async function main(): Promise<void> {
   });
 
   if (r.files === 0) {
-    console.error(`No Claude Code session logs found under ${root}${args.project ? ` for project "${args.project}"` : ''}`);
+    console.error(`quotaburn: no Claude Code session logs found under ${root}${args.project ? ` for project "${args.project}"` : ''}`);
     process.exitCode = 1;
     return;
   }
@@ -60,7 +60,7 @@ async function main(): Promise<void> {
     args.project ? `project: ${args.project}` : null,
   ].filter(Boolean).join(' · ');
 
-  console.log(`\n${bold(`ccwhy v${pkg.version}`)} — ${scope} — ${note(root)}`);
+  console.log(`\n${bold(`quotaburn v${pkg.version}`)} — ${scope} — ${note(root)}`);
   console.log(note(`${r.files} files (${mb} MB) · ${fmt(r.stats.lines)} lines · ${fmt(r.stats.skipped)} skipped · ${elapsed}s`) + '\n');
 
   console.log(`sessions: ${r.sessions} · assistant turns: ${fmt(r.assistantTurns)} · subagent output share: ${pct(r.subagentTotals.output, r.totals.output)}\n`);
@@ -202,7 +202,7 @@ function printQuickWins(r: ScanResult, totalDollars: number): void {
 
 function toJson(r: ScanResult, root: string): Record<string, unknown> {
   return {
-    ccwhyVersion: pkg.version,
+    quotaburnVersion: pkg.version,
     root,
     files: r.files,
     bytes: r.bytes,

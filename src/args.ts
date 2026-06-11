@@ -37,9 +37,9 @@ export function parseArgs(argv: string[]): { args: CliArgs } | { error: string }
   return { args };
 }
 
-export const HELP = `ccwhy — find out WHY your Claude Code quota burned, not just how much
+export const HELP = `quotaburn — find out WHERE your Claude Code quota burns, not just how much
 
-usage: ccwhy [options]
+usage: quotaburn [options]
 
   --days N          analyze only the last N days (default: full history)
   --project <path>  only sessions of the given project (path or fragment)
@@ -50,18 +50,18 @@ usage: ccwhy [options]
 
 reads ~/.claude/projects locally · no network · no telemetry`;
 
-export const EXPLAIN = `how ccwhy computes its numbers
+export const EXPLAIN = `how quotaburn computes its numbers
 
 data source
   Claude Code writes every session as JSONL under ~/.claude/projects
-  (or $CLAUDE_CONFIG_DIR/projects). ccwhy only reads these files —
+  (or $CLAUDE_CONFIG_DIR/projects). quotaburn only reads these files —
   no network calls, no telemetry, nothing leaves your machine.
 
 usage deduplication
   A streamed message is logged as SEVERAL records sharing message.id and
   requestId, with PROGRESSIVE usage: output_tokens grows per record while
   input/cache fields stay constant. Naive parsers either double-count the
-  input side or keep the first (smallest) output value. ccwhy counts input
+  input side or keep the first (smallest) output value. quotaburn counts input
   fields once per message and accumulates output deltas to the final value.
 
 residency cost (the "top context eaters" report)
@@ -77,7 +77,7 @@ cache expiry (the "rebuilt after idle" report)
   Anthropic's prompt cache expires after its TTL (5 minutes by default,
   1 hour when 1h cache writes are in use; reads refresh the clock). When a
   session sits idle longer than the TTL, the next turn re-writes the cache
-  and you pay for it. ccwhy bills that turn's cache_creation as rebuild
+  and you pay for it. quotaburn bills that turn's cache_creation as rebuild
   cost. Upper bound: the first turn after a gap also contains genuinely
   new content.
 

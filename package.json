@@ -1,10 +1,10 @@
 {
-  "name": "ccwhy",
+  "name": "quotaburn",
   "version": "0.0.1",
-  "description": "ccusage tells you HOW MUCH of your Claude Code quota you burned. ccwhy tells you WHY.",
+  "description": "Find out WHERE your Claude Code quota burns — per-tool attribution, cache expiry bills, repeated reads, MCP dead weight. Local logs only, zero deps.",
   "type": "module",
   "bin": {
-    "ccwhy": "./dist/cli.js"
+    "quotaburn": "./dist/cli.js"
   },
   "files": [
     "dist"
@@ -26,17 +26,19 @@
     "quota",
     "cost",
     "attribution",
+    "cache",
+    "ccusage",
     "mcp"
   ],
   "author": "Seydi Charyyev",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/TheSeydiCharyyev/ccwhy.git"
+    "url": "git+https://github.com/TheSeydiCharyyev/quotaburn.git"
   },
-  "homepage": "https://github.com/TheSeydiCharyyev/ccwhy#readme",
+  "homepage": "https://github.com/TheSeydiCharyyev/quotaburn#readme",
   "bugs": {
-    "url": "https://github.com/TheSeydiCharyyev/ccwhy/issues"
+    "url": "https://github.com/TheSeydiCharyyev/quotaburn/issues"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
