@@ -91,6 +91,9 @@ export interface ScanResult {
   subagentGroups: SubagentGroup[];
   /** compaction/context-reset boundaries found (markers + context-drop heuristic) */
   contextResets: number;
+  /** ISO timestamps of the earliest/latest counted assistant turn — the actual data window */
+  firstTimestamp: string | null;
+  lastTimestamp: string | null;
 }
 
 export function emptyTotals(): TokenTotals {
@@ -167,6 +170,8 @@ export async function scan(root: string, options: ScanOptions = {}): Promise<Sca
   let assistantTurns = 0;
   let bytes = 0;
   let contextResets = 0;
+  let firstTimestamp: string | null = null;
+  let lastTimestamp: string | null = null;
 
   const groups = new Map<string, SubagentGroup>();
 
@@ -178,6 +183,14 @@ export async function scan(root: string, options: ScanOptions = {}): Promise<Sca
       onTurn: () => assistantTurns++,
       onContextReset: () => contextResets++,
     });
+
+    // ISO-8601 strings compare correctly as strings
+    if (fileResult.firstTimestamp && (!firstTimestamp || fileResult.firstTimestamp < firstTimestamp)) {
+      firstTimestamp = fileResult.firstTimestamp;
+    }
+    if (fileResult.lastTimestamp && (!lastTimestamp || fileResult.lastTimestamp > lastTimestamp)) {
+      lastTimestamp = fileResult.lastTimestamp;
+    }
 
     if (file.isSubagent) {
       const key = file.workflowId ? `wf:${file.workflowId}` : `sa:${file.parentSession ?? '?'}`;
@@ -233,6 +246,7 @@ export async function scan(root: string, options: ScanOptions = {}): Promise<Sca
     sessions: sessions.size, assistantTurns,
     totals, subagentTotals, byModel, tools, repeatedReads, cache, startups, mcpCalls, subagentGroups,
     contextResets,
+    firstTimestamp, lastTimestamp,
   };
 }
 
@@ -275,7 +289,7 @@ function cacheCreationTotal(u: Usage): number {
 async function scanFile(
   file: SessionFile,
   ctx: FileScanContext,
-): Promise<{ totals: TokenTotals; firstTimestamp: string | null }> {
+): Promise<{ totals: TokenTotals; firstTimestamp: string | null; lastTimestamp: string | null }> {
   // per-file state: each .jsonl is one context window (main session or subagent)
   const toolUseNames = new Map<string, string>();
   const toolUseReadPath = new Map<string, string>();
@@ -287,6 +301,7 @@ async function scanFile(
   const seenUsage = new Map<string, number>();
   const fileTotals = emptyTotals();
   let firstTimestamp: string | null = null;
+  let lastTimestamp: string | null = null;
   let turn = 0;
   let prevTurnTs: number | null = null;
   let prevCtxSize = 0;
@@ -383,7 +398,10 @@ async function scanFile(
           turn++;
           ctx.onTurn();
 
-          if (firstTimestamp === null && record.timestamp) firstTimestamp = record.timestamp;
+          if (record.timestamp) {
+            if (firstTimestamp === null) firstTimestamp = record.timestamp;
+            lastTimestamp = record.timestamp;
+          }
           addUsage(fileTotals, msg.usage);
 
           const ts = record.timestamp ? Date.parse(record.timestamp) : NaN;
@@ -452,5 +470,5 @@ async function scanFile(
   // until a compaction/reset boundary (handled above) or the session ends here
   settleResidency(turn);
 
-  return { totals: fileTotals, firstTimestamp };
+  return { totals: fileTotals, firstTimestamp, lastTimestamp };
 }

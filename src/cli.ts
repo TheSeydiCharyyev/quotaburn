@@ -6,6 +6,7 @@ import { spawn } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { computeAdvice, headlineText, percentile, type Advice } from './advice.js';
 import { EXPLAIN, HELP, parseArgs } from './args.js';
 import { claudeProjectsDir } from './discover.js';
 import { readConfiguredMcpServers } from './mcpconfig.js';
@@ -117,7 +118,10 @@ async function main(): Promise<void> {
     console.log(`    ${note(when)}  idle ${warn(gapHuman(e.gapMinutes).padStart(8))}  ttl ${e.ttl}  rebuild ${fmt(e.recreationTokens).padStart(10)} tok  ${note(e.project)}`);
   }
 
-  printQuickWins(r, cost.sum.total);
+  const advice = computeAdvice(r, cost.sum);
+  printFixes(advice);
+  // the headline: one copy-paste-friendly sentence, deliberately unstyled
+  console.log(`\n  "${headlineText(advice.headline)}"`);
   console.log();
 }
 
@@ -157,68 +161,20 @@ function printCost({ sum, unknown }: CostSummary): void {
   console.log(note('  note: subscription plans do not bill per token — this is the API-price value of your usage') + '\n');
 }
 
-interface QuickWin {
-  severity: number;
-  text: string;
-}
-
-function computeQuickWins(r: ScanResult, totalDollars: number): string[] {
-  const wins: QuickWin[] = [];
-
-  // severities are data-driven: pure, directly-avoidable waste ranks above general advice
-  if (totalDollars > 0 && r.cache.recreationDollars / totalDollars > 0.05) {
-    const share = pct(r.cache.recreationDollars, totalDollars);
-    wins.push({
-      severity: (r.cache.recreationDollars / totalDollars) * 2, // pure waste, fully avoidable
-      text: `don't resume idle sessions: $${r.cache.recreationDollars.toFixed(2)} (${share} of everything) went to rebuilding expired cache — start a fresh session with a short handoff instead`,
-    });
-  }
-
-  const wastedReads = r.repeatedReads.reduce((s, x) => s + x.wastedTokens, 0);
-  if (wastedReads > 100_000 && r.repeatedReads[0]) {
-    const top = r.repeatedReads[0];
-    wins.push({
-      severity: Math.min(0.5, wastedReads / 10_000_000),
-      text: `same files re-read in one session: ~${fmt(wastedReads)} tok wasted; worst: ${shorten(top.filePath, 50)} read ${top.reads}× — and every copy stays in context (see top context eaters)`,
-    });
-  }
-
-  const startupMedian = percentile(
-    r.startups.map((s) => s.inputUncached + s.cacheRead + s.cacheCreation).sort((a, b) => a - b),
-    50,
-  );
-  if (startupMedian > 20_000) {
-    wins.push({
-      severity: Math.min(0.5, startupMedian / 200_000),
-      text: `every session starts ~${fmt(startupMedian)} tok deep before your first word (system prompt + tools + skills + CLAUDE.md) — trim instructions and MCP servers you don't use`,
-    });
-  }
-
-  if (r.tools[0] && r.tools[0].name === 'Read') {
-    const share = r.tools.reduce((s, t) => s + t.residencyCost, 0);
-    if (share > 0 && r.tools[0].residencyCost / share > 0.6) {
-      wins.push({
-        severity: 0.15, // general advice, not directly-billable waste
-        text: `file reads dominate your context (${pct(r.tools[0].residencyCost, share)} of residency cost) — read selectively (offsets/limits, grep first), and prefer fresh sessions over ever-growing ones`,
-      });
-    }
-  }
-
-  return wins
-    .sort((a, b) => b.severity - a.severity)
-    .slice(0, 3)
-    .map((w) => w.text);
-}
-
-function printQuickWins(r: ScanResult, totalDollars: number): void {
-  const wins = computeQuickWins(r, totalDollars);
-  if (wins.length === 0) return;
-  console.log(`\n${header('top quick wins:')}`);
-  wins.forEach((w, i) => console.log(`  ${bold(String(i + 1))}. ${w}`));
+function printFixes(a: Advice): void {
+  if (a.fixes.length === 0) return;
+  console.log(`\n${header('top fixes')} ${note(`(savings projected from your last ${Math.round(a.windowDays)} days at your blended API rates)`)}`);
+  a.fixes.forEach((f, i) => {
+    const tag = f.monthlyDollars !== null ? money(`~$${f.monthlyDollars.toFixed(0)}/mo`) : '';
+    console.log(`  ${bold(String(i + 1))}. ${f.title}${tag ? `  ${tag}` : ''}`);
+    console.log(`     ${f.subtitle}`);
+    console.log(`     ${note(f.mathLine)}`);
+  });
 }
 
 async function writeHtmlReport(r: ScanResult, root: string, scope: string, mb: number): Promise<string> {
   const cost = computeCost(r);
+  const advice = computeAdvice(r, cost.sum);
   const sizes = r.startups
     .map((s) => s.inputUncached + s.cacheRead + s.cacheCreation)
     .sort((a, b) => a - b);
@@ -249,6 +205,9 @@ async function writeHtmlReport(r: ScanResult, root: string, scope: string, mb: n
     sessions: r.sessions,
     turns: r.assistantTurns,
     contextResets: r.contextResets,
+    windowDays: advice.windowDays,
+    headline: advice.headline,
+    fixes: advice.fixes,
     cost: {
       total: cost.sum.total,
       cacheRead: cost.sum.cacheRead,
@@ -267,6 +226,7 @@ async function writeHtmlReport(r: ScanResult, root: string, scope: string, mb: n
     repeatedReads: r.repeatedReads,
     cache: r.cache,
     startup: { count: sizes.length, median: percentile(sizes, 50), p90: percentile(sizes, 90) },
+    subagentOutputShare: r.totals.output > 0 ? r.subagentTotals.output / r.totals.output : 0,
     mcp,
     subagentGroups: r.subagentGroups.slice(0, 10).map((g) => ({
       kind: g.kind,
@@ -277,7 +237,6 @@ async function writeHtmlReport(r: ScanResult, root: string, scope: string, mb: n
       cacheWrite: g.totals.cacheCreation5m + g.totals.cacheCreation1h,
       date: g.firstTimestamp.slice(0, 10),
     })),
-    quickWins: computeQuickWins(r, cost.sum.total),
   };
 
   const html = renderHtmlReport(data);
@@ -337,12 +296,6 @@ function gapHuman(minutes: number): string {
   if (minutes < 60) return `${minutes}m`;
   if (minutes < 60 * 24) return `${(minutes / 60).toFixed(1)}h`;
   return `${(minutes / 60 / 24).toFixed(1)}d`;
-}
-
-function percentile(sorted: number[], p: number): number {
-  if (sorted.length === 0) return 0;
-  const idx = Math.min(sorted.length - 1, Math.floor((p / 100) * sorted.length));
-  return sorted[idx] ?? 0;
 }
 
 function printStartupTax(r: Awaited<ReturnType<typeof scan>>): void {
