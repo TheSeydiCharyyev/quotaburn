@@ -4,7 +4,7 @@
   "description": "Find out WHERE your Claude Code quota burns — per-tool attribution, cache expiry bills, repeated reads, MCP dead weight. Local logs only, zero deps.",
   "type": "module",
   "bin": {
-    "quotaburn": "./dist/cli.js"
+    "quotaburn": "dist/cli.js"
   },
   "files": [
     "dist"
