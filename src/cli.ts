@@ -1,5 +1,7 @@
 #!/usr/bin/env node
-import { createRequire } from 'node:module';
+// static import so the bundler inlines the version — a runtime require would
+// break the published single-file bundle when run outside the package dir
+import pkg from '../package.json' with { type: 'json' };
 import { EXPLAIN, HELP, parseArgs } from './args.js';
 import { claudeProjectsDir } from './discover.js';
 import { readConfiguredMcpServers } from './mcpconfig.js';
@@ -9,8 +11,6 @@ import {
 } from './pricing.js';
 import { scan, type ScanResult, type TokenTotals } from './scan.js';
 import { bold, header, money, note, warn } from './style.js';
-
-const pkg = createRequire(import.meta.url)('../package.json') as { version: string };
 
 const fmt = (n: number): string => n.toLocaleString('en-US');
 
