@@ -58,16 +58,29 @@ const DARK_TOKENS = `
       --accent: #ff7a47; --accent-tint: rgba(255, 122, 71, .13);
       --track: #262b34; --ok: #58b58b;`;
 
-export function renderHtmlReport(data: ReportData): string {
+/** Host-environment tweaks — used by the VS Code extension's webview. */
+export interface RenderOptions {
+  /** value for the script-src nonce; both inline scripts get nonce="..." */
+  nonce?: string;
+  /** Content-Security-Policy meta tag content (webviews require an explicit CSP) */
+  csp?: string;
+  /** initial theme when the host knows better than prefers-color-scheme (saved choice still wins) */
+  defaultTheme?: 'dark' | 'light';
+}
+
+export function renderHtmlReport(data: ReportData, opts: RenderOptions = {}): string {
   // </script> inside the JSON would terminate the script block
   const json = JSON.stringify(data).replace(/</g, '\\u003c');
+  const nonce = opts.nonce ? ` nonce="${opts.nonce}"` : '';
+  const csp = opts.csp ? `\n<meta http-equiv="Content-Security-Policy" content="${opts.csp}">` : '';
+  const theme = opts.defaultTheme ? ` data-theme="${opts.defaultTheme}"` : '';
   return `<!DOCTYPE html>
-<html lang="en">
+<html lang="en"${theme}>
 <head>
-<meta charset="UTF-8">
+<meta charset="UTF-8">${csp}
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>quotaburn — where your Claude Code quota burns</title>
-<script>try{var t=localStorage.getItem('qb-theme');if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)}catch(e){}</script>
+<script${nonce}>try{var t=localStorage.getItem('qb-theme');if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)}catch(e){}</script>
 <style>
   :root {
     --bg: #faf9f7; --surface: #ffffff; --inset: #f6f4f0;
@@ -287,7 +300,7 @@ export function renderHtmlReport(data: ReportData): string {
 
 </div>
 
-<script>
+<script${nonce}>
 const DATA = ${json};
 
 (function () {

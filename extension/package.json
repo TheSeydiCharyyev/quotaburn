@@ -1,0 +1,73 @@
+{
+  "name": "quotaburn-vscode",
+  "displayName": "quotaburn",
+  "description": "See where your Claude Code quota burns — live burn figure in the status bar, full local dashboard one click away. Zero network, zero telemetry.",
+  "version": "0.1.0",
+  "publisher": "TheSeydiCharyyev",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/TheSeydiCharyyev/quotaburn"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Visualization",
+    "Other"
+  ],
+  "keywords": [
+    "claude",
+    "claude-code",
+    "tokens",
+    "usage",
+    "quota",
+    "cost"
+  ],
+  "main": "./dist/extension.cjs",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "quotaburn.showReport",
+        "title": "quotaburn: Show Burn Report"
+      },
+      {
+        "command": "quotaburn.refresh",
+        "title": "quotaburn: Refresh Status Bar"
+      }
+    ],
+    "configuration": {
+      "title": "quotaburn",
+      "properties": {
+        "quotaburn.statusBar.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the burn figure in the status bar."
+        },
+        "quotaburn.statusBar.days": {
+          "type": "number",
+          "default": 7,
+          "minimum": 1,
+          "description": "Window in days for the status bar figure."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "typecheck": "tsc --noEmit",
+    "package": "npm run build && vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.1.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.5.0"
+  }
+}
