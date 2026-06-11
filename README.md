@@ -2,7 +2,7 @@
 
 > I ran this on my own Claude Code history: **$3,000+ of API-priced usage — and 21% of it was rebuilding expired prompt cache after idle gaps.** One habit change saves ~$535/month.
 
-**[ccusage](https://github.com/ryoppippi/ccusage) shows how much you burned. quotaburn shows _where_ — and how to stop it.**
+**Other tools show how much you burned. quotaburn shows _where_ — and how to stop it.**
 
 <!-- GIF: terminal run of `npx quotaburn` + transition to the `--html` dashboard goes here -->
 
