@@ -2,6 +2,10 @@
 // static import so the bundler inlines the version — a runtime require would
 // break the published single-file bundle when run outside the package dir
 import pkg from '../package.json' with { type: 'json' };
+import { spawn } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { EXPLAIN, HELP, parseArgs } from './args.js';
 import { claudeProjectsDir } from './discover.js';
 import { readConfiguredMcpServers } from './mcpconfig.js';
@@ -9,6 +13,7 @@ import {
   CACHE_READ_MULT, CACHE_WRITE_1H_MULT, CACHE_WRITE_5M_MULT,
   costOfTotals, resolvePricing, type CostBreakdown,
 } from './pricing.js';
+import { renderHtmlReport, type ReportData } from './report.js';
 import { scan, type ScanResult, type TokenTotals } from './scan.js';
 import { bold, header, money, note, warn } from './style.js';
 
@@ -59,6 +64,13 @@ async function main(): Promise<void> {
     args.days !== undefined ? `last ${args.days} days` : 'full history',
     args.project ? `project: ${args.project}` : null,
   ].filter(Boolean).join(' · ');
+
+  if (args.html) {
+    const file = await writeHtmlReport(r, root, scope, Number(mb));
+    console.log(`quotaburn: report written to ${file} — opening in your browser…`);
+    openInBrowser(file);
+    return;
+  }
 
   console.log(`\n${bold(`quotaburn v${pkg.version}`)} — ${scope} — ${note(root)}`);
   console.log(note(`${r.files} files (${mb} MB) · ${fmt(r.stats.lines)} lines · ${fmt(r.stats.skipped)} skipped · ${elapsed}s`) + '\n');
@@ -150,7 +162,7 @@ interface QuickWin {
   text: string;
 }
 
-function printQuickWins(r: ScanResult, totalDollars: number): void {
+function computeQuickWins(r: ScanResult, totalDollars: number): string[] {
   const wins: QuickWin[] = [];
 
   // severities are data-driven: pure, directly-avoidable waste ranks above general advice
@@ -158,7 +170,7 @@ function printQuickWins(r: ScanResult, totalDollars: number): void {
     const share = pct(r.cache.recreationDollars, totalDollars);
     wins.push({
       severity: (r.cache.recreationDollars / totalDollars) * 2, // pure waste, fully avoidable
-      text: `don't resume idle sessions: ${money(`$${r.cache.recreationDollars.toFixed(2)}`)} (${share} of everything) went to rebuilding expired cache — start a fresh session with a short handoff instead`,
+      text: `don't resume idle sessions: $${r.cache.recreationDollars.toFixed(2)} (${share} of everything) went to rebuilding expired cache — start a fresh session with a short handoff instead`,
     });
   }
 
@@ -192,12 +204,98 @@ function printQuickWins(r: ScanResult, totalDollars: number): void {
     }
   }
 
-  if (wins.length === 0) return;
-  console.log(`\n${header('top quick wins:')}`);
-  wins
+  return wins
     .sort((a, b) => b.severity - a.severity)
     .slice(0, 3)
-    .forEach((w, i) => console.log(`  ${bold(String(i + 1))}. ${w.text}`));
+    .map((w) => w.text);
+}
+
+function printQuickWins(r: ScanResult, totalDollars: number): void {
+  const wins = computeQuickWins(r, totalDollars);
+  if (wins.length === 0) return;
+  console.log(`\n${header('top quick wins:')}`);
+  wins.forEach((w, i) => console.log(`  ${bold(String(i + 1))}. ${w}`));
+}
+
+async function writeHtmlReport(r: ScanResult, root: string, scope: string, mb: number): Promise<string> {
+  const cost = computeCost(r);
+  const sizes = r.startups
+    .map((s) => s.inputUncached + s.cacheRead + s.cacheCreation)
+    .sort((a, b) => a - b);
+
+  const configured = await readConfiguredMcpServers();
+  const seen = new Set<string>();
+  const mcp = configured.map((s) => {
+    seen.add(s.name);
+    const calls = r.mcpCalls.get(s.name) ?? 0;
+    return {
+      name: s.name,
+      scope: s.scopes.includes('global') ? 'global' : `${s.scopes.length} project(s)`,
+      calls,
+      dead: calls === 0,
+    };
+  });
+  for (const [name, calls] of r.mcpCalls) {
+    if (!seen.has(name)) mcp.push({ name, scope: '(not in config)', calls, dead: false });
+  }
+
+  const data: ReportData = {
+    version: pkg.version,
+    scope,
+    root,
+    generatedAt: new Date().toISOString().slice(0, 16).replace('T', ' ') + ' UTC',
+    files: r.files,
+    mb,
+    sessions: r.sessions,
+    turns: r.assistantTurns,
+    contextResets: r.contextResets,
+    cost: {
+      total: cost.sum.total,
+      cacheRead: cost.sum.cacheRead,
+      cacheWrite: cost.sum.cacheWrite,
+      output: cost.sum.output,
+      input: cost.sum.input,
+    },
+    totals: r.totals,
+    byModel: [...r.byModel.entries()]
+      .sort((a, b) => b[1].output - a[1].output)
+      .map(([model, t]) => {
+        const p = resolvePricing(model);
+        return { model, output: t.output, cacheRead: t.cacheRead, dollars: p ? costOfTotals(t, p).total : null };
+      }),
+    tools: r.tools,
+    repeatedReads: r.repeatedReads,
+    cache: r.cache,
+    startup: { count: sizes.length, median: percentile(sizes, 50), p90: percentile(sizes, 90) },
+    mcp,
+    subagentGroups: r.subagentGroups.slice(0, 10).map((g) => ({
+      kind: g.kind,
+      id: g.id,
+      agents: g.agents,
+      output: g.totals.output,
+      cacheRead: g.totals.cacheRead,
+      cacheWrite: g.totals.cacheCreation5m + g.totals.cacheCreation1h,
+      date: g.firstTimestamp.slice(0, 10),
+    })),
+    quickWins: computeQuickWins(r, cost.sum.total),
+  };
+
+  const html = renderHtmlReport(data);
+  let file = join(process.cwd(), 'quotaburn-report.html');
+  try {
+    writeFileSync(file, html, 'utf8');
+  } catch {
+    file = join(tmpdir(), 'quotaburn-report.html');
+    writeFileSync(file, html, 'utf8');
+  }
+  return file;
+}
+
+function openInBrowser(file: string): void {
+  const child = process.platform === 'win32'
+    ? spawn('cmd', ['/c', 'start', '', file], { detached: true, stdio: 'ignore' })
+    : spawn(process.platform === 'darwin' ? 'open' : 'xdg-open', [file], { detached: true, stdio: 'ignore' });
+  child.unref();
 }
 
 function toJson(r: ScanResult, root: string): Record<string, unknown> {

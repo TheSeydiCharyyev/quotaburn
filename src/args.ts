@@ -4,17 +4,20 @@ export interface CliArgs {
   /** only sessions whose project matches this path/substring */
   project?: string;
   json: boolean;
+  /** generate a self-contained HTML report and open it in the browser */
+  html: boolean;
   explain: boolean;
   help: boolean;
   version: boolean;
 }
 
 export function parseArgs(argv: string[]): { args: CliArgs } | { error: string } {
-  const args: CliArgs = { json: false, explain: false, help: false, version: false };
+  const args: CliArgs = { json: false, html: false, explain: false, help: false, version: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     switch (a) {
       case '--json': args.json = true; break;
+      case '--html': args.html = true; break;
       case '--explain': args.explain = true; break;
       case '--help': case '-h': args.help = true; break;
       case '--version': case '-v': args.version = true; break;
@@ -43,6 +46,7 @@ usage: quotaburn [options]
 
   --days N          analyze only the last N days (default: full history)
   --project <path>  only sessions of the given project (path or fragment)
+  --html            visual report: writes a self-contained HTML file and opens it
   --json            machine-readable output
   --explain         print methodology and honest caveats, then exit
   -v, --version     print version
