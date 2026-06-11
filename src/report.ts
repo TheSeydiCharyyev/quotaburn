@@ -40,8 +40,13 @@ export interface ReportData {
   };
   startup: { count: number; median: number; p90: number };
   subagentOutputShare: number;
+  topSessions: { sessionId: string; title: string | null; dollars: number; turns: number }[];
+  sessionCount: number;
   mcp: { name: string; scope: string; calls: number; dead: boolean }[];
-  subagentGroups: { kind: string; id: string; agents: number; output: number; cacheRead: number; cacheWrite: number; date: string }[];
+  subagentGroups: {
+    kind: string; id: string; name: string | null; agentDescriptions: string[];
+    agents: number; output: number; cacheRead: number; cacheWrite: number; date: string;
+  }[];
 }
 
 // one source of truth for the dark palette — applied both via the manual
@@ -436,6 +441,26 @@ const DATA = ${json};
       '<p class="note">' + note + '</p><div class="bars">' + bars + '</div>'));
   })();
 
+  // top sessions
+  (function () {
+    var ss = DATA.topSessions;
+    if (ss.length === 0) return;
+    var top = ss.slice(0, 5);
+    var topSum = top.reduce(function (s, x) { return s + x.dollars; }, 0);
+    var max = top[0].dollars;
+    var bars = top.map(function (x) {
+      var name = x.title || x.sessionId.slice(0, 8);
+      return barRow(name, max > 0 ? (x.dollars / max) * 100 : 0,
+        '<b>' + usd(x.dollars) + '</b> <span class="detail">· ' + fmt(x.turns) + ' turns</span>', 1);
+    }).join('');
+    var share = Math.round(pctOf(topSum, c.total));
+    rows.push(row('Top sessions',
+      'Your ' + top.length + ' most expensive sessions carry ' + share + '% of everything you spent.',
+      usd(topSum), 'top ' + top.length + ' of ' + DATA.sessionCount,
+      '<div class="bars">' + bars + '</div>' +
+      '<p class="note">Each session\\'s bill includes its subagents and workflows. Long-lived sessions are also the ones idle-expiry rebuilds hit hardest (see cache economics).</p>'));
+  })();
+
   // cache economics
   (function () {
     var ce = DATA.cache;
@@ -476,9 +501,13 @@ const DATA = ${json};
       return;
     }
     var agents = g.reduce(function (s, x) { return s + x.agents; }, 0);
-    var label = function (x) { return x.kind === 'workflow' ? 'workflow ' + x.id : 'subagents of ' + x.id.slice(0, 8); };
+    var label = function (x) {
+      if (x.name) return (x.kind === 'workflow' ? 'workflow: ' : 'subagents: ') + x.name;
+      return x.kind === 'workflow' ? 'workflow ' + x.id : 'subagents of ' + x.id.slice(0, 8);
+    };
     var tbl = g.slice(0, 8).map(function (x) {
-      return '<tr><td class="mono">' + esc(x.date) + '</td><td>' + esc(label(x)) + '</td>' +
+      var tip = x.agentDescriptions.length > 0 ? ' title="' + esc(x.agentDescriptions.join(' · ')) + '"' : '';
+      return '<tr><td class="mono">' + esc(x.date) + '</td><td' + tip + '>' + esc(label(x)) + '</td>' +
         '<td class="r">' + x.agents + '</td><td class="r">' + fmt(x.output) + '</td><td class="r">' + fmt(x.cacheRead) + '</td></tr>';
     }).join('');
     rows.push(row('Subagents &amp; workflows',

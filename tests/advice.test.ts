@@ -20,6 +20,7 @@ function makeResult(overrides: Partial<ScanResult> = {}): ScanResult {
     startups: [],
     mcpCalls: new Map(),
     subagentGroups: [],
+    sessionStats: [],
     contextResets: 0,
     firstTimestamp: '2026-01-01T00:00:00.000Z',
     lastTimestamp: '2026-01-16T00:00:00.000Z',

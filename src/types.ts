@@ -55,6 +55,10 @@ export interface LogRecord {
   isCompactSummary?: boolean;
   /** e.g. "compact_boundary" on system records (newer log versions) */
   subtype?: string;
+  /** on "ai-title" records: the AI-generated human-readable session title */
+  aiTitle?: string;
+  /** on "last-prompt" records: the user's most recent prompt text */
+  lastPrompt?: string;
   message?: LogMessage;
 }
 

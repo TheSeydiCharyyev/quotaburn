@@ -89,6 +89,8 @@ async function main(): Promise<void> {
     console.log(`  ${model.padEnd(28)} out ${fmt(t.output).padStart(12)}   cache-read ${fmt(t.cacheRead).padStart(15)}  ${dollars}`);
   }
 
+  printTopSessions(r);
+
   const totalResidency = r.tools.reduce((s, t) => s + t.residencyCost, 0);
   console.log(`\n${header('top context eaters')} ${note(`(tokens added × turns they stayed in context · ${r.contextResets} context resets detected)`)}`);
   for (const t of r.tools.slice(0, 12)) {
@@ -227,10 +229,19 @@ async function writeHtmlReport(r: ScanResult, root: string, scope: string, mb: n
     cache: r.cache,
     startup: { count: sizes.length, median: percentile(sizes, 50), p90: percentile(sizes, 90) },
     subagentOutputShare: r.totals.output > 0 ? r.subagentTotals.output / r.totals.output : 0,
+    topSessions: r.sessionStats.slice(0, 8).map((s) => ({
+      sessionId: s.sessionId,
+      title: s.title,
+      dollars: s.dollars,
+      turns: s.turns,
+    })),
+    sessionCount: r.sessionStats.length,
     mcp,
     subagentGroups: r.subagentGroups.slice(0, 10).map((g) => ({
       kind: g.kind,
       id: g.id,
+      name: g.name,
+      agentDescriptions: g.agentDescriptions,
       agents: g.agents,
       output: g.totals.output,
       cacheRead: g.totals.cacheRead,
@@ -276,6 +287,7 @@ function toJson(r: ScanResult, root: string): Record<string, unknown> {
     startups: r.startups,
     mcpCalls: Object.fromEntries(r.mcpCalls),
     subagentGroups: r.subagentGroups,
+    sessionStats: r.sessionStats,
   };
 }
 
@@ -312,6 +324,22 @@ function printStartupTax(r: Awaited<ReturnType<typeof scan>>): void {
   console.log(`  fresh starts (cold cache)    ${fmt(fresh.length).padStart(12)}  paying ${fmt(freshWrites)} tok of cache writes total`);
 }
 
+function truncTitle(s: string, max: number): string {
+  return s.length <= max ? s : s.slice(0, max - 1) + '…';
+}
+
+function printTopSessions(r: ScanResult): void {
+  if (r.sessionStats.length === 0) return;
+  const top = r.sessionStats.slice(0, 5);
+  const topSum = top.reduce((s, x) => s + x.dollars, 0);
+  const all = r.sessionStats.reduce((s, x) => s + x.dollars, 0);
+  console.log(`\n${header('top sessions')} ${note(`(top ${top.length} = ${pct(topSum, all)} of all spend · subagent spend folded in)`)}`);
+  for (const s of top) {
+    const name = s.title ?? s.sessionId.slice(0, 8);
+    console.log(`  ${money(`$${s.dollars.toFixed(2)}`.padStart(9))}  ${truncTitle(name, 56).padEnd(58)} ${note(`${fmt(s.turns)} turns`)}`);
+  }
+}
+
 function printSubagents(r: Awaited<ReturnType<typeof scan>>): void {
   const groups = r.subagentGroups;
   console.log(`\n${header('subagents & workflows:')}`);
@@ -326,7 +354,9 @@ function printSubagents(r: Awaited<ReturnType<typeof scan>>): void {
   console.log('  top burners:');
   for (const g of groups.slice(0, 8)) {
     const when = g.firstTimestamp.slice(0, 10);
-    const label = g.kind === 'workflow' ? `workflow ${g.id}` : `subagents of ${g.id.slice(0, 8)}`;
+    const label = g.kind === 'workflow'
+      ? `workflow "${truncTitle(g.name ?? g.id, 30)}"`
+      : `subagents of "${truncTitle(g.name ?? g.id.slice(0, 8), 28)}"`;
     console.log(
       `    ${when}  ${label.padEnd(34)} ${String(g.agents).padStart(3)} agents  ` +
       `out ${fmt(g.totals.output).padStart(10)}  cache-read ${fmt(g.totals.cacheRead).padStart(13)}  cache-write ${fmt(g.totals.cacheCreation5m + g.totals.cacheCreation1h).padStart(11)}`,

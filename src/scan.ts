@@ -1,6 +1,8 @@
+import { readFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import { discoverSessionFiles } from './discover.js';
 import { parseSessionFile, type ParseStats } from './parser.js';
-import { CACHE_WRITE_1H_MULT, CACHE_WRITE_5M_MULT, resolvePricing } from './pricing.js';
+import { CACHE_WRITE_1H_MULT, CACHE_WRITE_5M_MULT, costOfTotals, resolvePricing } from './pricing.js';
 import type { SessionFile, ToolResultBlock, ToolUseBlock, Usage } from './types.js';
 
 export interface TokenTotals {
@@ -71,6 +73,24 @@ export interface SubagentGroup {
   agents: number;
   totals: TokenTotals;
   firstTimestamp: string;
+  /** human name: workflowName from the wf_*.json sidecar, or the parent session's ai-title */
+  name: string | null;
+  /** what the individual agents were asked to do, from agent-*.meta.json sidecars */
+  agentDescriptions: string[];
+}
+
+/** One session's total burn (its own turns plus everything its subagents/workflows spent). */
+export interface SessionStat {
+  sessionId: string;
+  project: string;
+  /** ai-title when the log has one, else the last user prompt, else null */
+  title: string | null;
+  /** API-list-price value; records with unknown model pricing excluded (consistent with global cost) */
+  dollars: number;
+  /** main-session assistant turns (subagent turns not included) */
+  turns: number;
+  firstTimestamp: string | null;
+  lastTimestamp: string | null;
 }
 
 export interface ScanResult {
@@ -89,6 +109,8 @@ export interface ScanResult {
   /** calls per MCP server name (the <server> in mcp__<server>__<tool>) */
   mcpCalls: Map<string, number>;
   subagentGroups: SubagentGroup[];
+  /** sessions ranked by dollars, subagent spend folded into the parent session */
+  sessionStats: SessionStat[];
   /** compaction/context-reset boundaries found (markers + context-drop heuristic) */
   contextResets: number;
   /** ISO timestamps of the earliest/latest counted assistant turn — the actual data window */
@@ -167,6 +189,11 @@ export async function scan(root: string, options: ScanOptions = {}): Promise<Sca
   const cacheEvents: CacheExpiryEvent[] = [];
   const startups: SessionStartup[] = [];
   const mcpCalls = new Map<string, number>();
+  const sessionTitles = new Map<string, { ai?: string; last?: string }>();
+  const sessionAgg = new Map<string, {
+    project: string; dollars: number; turns: number;
+    firstTimestamp: string | null; lastTimestamp: string | null;
+  }>();
   let assistantTurns = 0;
   let bytes = 0;
   let contextResets = 0;
@@ -179,6 +206,7 @@ export async function scan(root: string, options: ScanOptions = {}): Promise<Sca
     bytes += file.sizeBytes;
     const fileResult = await scanFile(file, {
       stats, totals, subagentTotals, byModel, toolAgg, readAgg, sessions, cacheEvents, startups, mcpCalls,
+      sessionTitles, sessionAgg,
       cutoffMs: options.cutoffMs,
       onTurn: () => assistantTurns++,
       onContextReset: () => contextResets++,
@@ -201,8 +229,23 @@ export async function scan(root: string, options: ScanOptions = {}): Promise<Sca
         agents: 0,
         totals: emptyTotals(),
         firstTimestamp: '',
+        name: null,
+        agentDescriptions: [],
       };
-      if (file.isAgentTranscript) group.agents++;
+      if (file.isAgentTranscript) {
+        group.agents++;
+        // agent-<id>.meta.json sits next to agent-<id>.jsonl and carries the task description
+        if (group.agentDescriptions.length < 5) {
+          const desc = await readJsonField(file.path.replace(/\.jsonl$/, '.meta.json'), 'description');
+          if (desc) group.agentDescriptions.push(desc);
+        }
+      }
+      // workflow runs have a <session>/workflows/<wfId>.json sidecar with the workflow name;
+      // agent transcripts live at <session>/subagents/workflows/<wfId>/agent-*.jsonl
+      if (file.workflowId && group.name === null) {
+        const sessionDir = dirname(dirname(dirname(dirname(file.path))));
+        group.name = await readJsonField(join(sessionDir, 'workflows', `${file.workflowId}.json`), 'workflowName');
+      }
       mergeTotals(group.totals, fileResult.totals);
       if (fileResult.firstTimestamp && (!group.firstTimestamp || fileResult.firstTimestamp < group.firstTimestamp)) {
         group.firstTimestamp = fileResult.firstTimestamp;
@@ -210,6 +253,29 @@ export async function scan(root: string, options: ScanOptions = {}): Promise<Sca
       groups.set(key, group);
     }
   }
+
+  // standalone subagent groups are named after the session that spawned them;
+  // titles only settle once every file has been scanned
+  for (const group of groups.values()) {
+    if (group.kind === 'subagents' && group.name === null) {
+      group.name = sessionTitles.get(group.id)?.ai ?? null;
+    }
+  }
+
+  const sessionStats: SessionStat[] = [...sessionAgg.entries()]
+    .map(([sessionId, a]) => {
+      const t = sessionTitles.get(sessionId);
+      return {
+        sessionId,
+        project: a.project,
+        title: t?.ai ?? (t?.last ? truncate(t.last, 64) : null),
+        dollars: a.dollars,
+        turns: a.turns,
+        firstTimestamp: a.firstTimestamp,
+        lastTimestamp: a.lastTimestamp,
+      };
+    })
+    .sort((a, b) => b.dollars - a.dollars);
 
   const subagentGroups = [...groups.values()].sort((a, b) => b.totals.output - a.totals.output);
 
@@ -245,9 +311,25 @@ export async function scan(root: string, options: ScanOptions = {}): Promise<Sca
     files: files.length, bytes, stats,
     sessions: sessions.size, assistantTurns,
     totals, subagentTotals, byModel, tools, repeatedReads, cache, startups, mcpCalls, subagentGroups,
+    sessionStats,
     contextResets,
     firstTimestamp, lastTimestamp,
   };
+}
+
+/** Read one string field from a small JSON sidecar; any failure (missing file, bad JSON) → null. */
+async function readJsonField(path: string, field: string): Promise<string | null> {
+  try {
+    const parsed: unknown = JSON.parse(await readFile(path, 'utf8'));
+    const value = (parsed as Record<string, unknown>)[field];
+    return typeof value === 'string' && value.length > 0 ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function truncate(s: string, max: number): string {
+  return s.length <= max ? s : s.slice(0, max - 1) + '…';
 }
 
 function mergeTotals(into: TokenTotals, from: TokenTotals): void {
@@ -269,6 +351,11 @@ interface FileScanContext {
   cacheEvents: CacheExpiryEvent[];
   startups: SessionStartup[];
   mcpCalls: Map<string, number>;
+  sessionTitles: Map<string, { ai?: string; last?: string }>;
+  sessionAgg: Map<string, {
+    project: string; dollars: number; turns: number;
+    firstTimestamp: string | null; lastTimestamp: string | null;
+  }>;
   cutoffMs?: number;
   onTurn: () => void;
   onContextReset: () => void;
@@ -306,6 +393,19 @@ async function scanFile(
   let prevTurnTs: number | null = null;
   let prevCtxSize = 0;
 
+  // everything a session spends — its own turns and its subagents' — rolls up to the
+  // main session: subagent files carry the parent id, main files their own sessionId
+  const sessionAggFor = (record: { sessionId?: string }) => {
+    const key = file.isSubagent ? file.parentSession : record.sessionId;
+    if (!key) return null;
+    let a = ctx.sessionAgg.get(key);
+    if (!a) {
+      a = { project: file.project, dollars: 0, turns: 0, firstTimestamp: null, lastTimestamp: null };
+      ctx.sessionAgg.set(key, a);
+    }
+    return a;
+  };
+
   // a compaction/reset boundary means earlier tool results left the context:
   // close out their residency up to the given turn and stop charging them
   const settleResidency = (uptoTurn: number): void => {
@@ -332,6 +432,20 @@ async function scanFile(
       continue;
     }
     if (record.sessionId) ctx.sessions.add(record.sessionId);
+
+    // session naming records carry no usage — collect and move on
+    if (record.type === 'ai-title' && record.sessionId && record.aiTitle) {
+      const t = ctx.sessionTitles.get(record.sessionId) ?? {};
+      t.ai = record.aiTitle;
+      ctx.sessionTitles.set(record.sessionId, t);
+      continue;
+    }
+    if (record.type === 'last-prompt' && record.sessionId && record.lastPrompt) {
+      const t = ctx.sessionTitles.get(record.sessionId) ?? {};
+      t.last = record.lastPrompt;
+      ctx.sessionTitles.set(record.sessionId, t);
+      continue;
+    }
 
     const isCompactMarker =
       record.type === 'summary' ||
@@ -379,6 +493,11 @@ async function scanFile(
             if (msg.model) {
               const m = ctx.byModel.get(msg.model);
               if (m) m.output += delta;
+              const p = resolvePricing(msg.model);
+              if (p) {
+                const agg = sessionAggFor(record);
+                if (agg) agg.dollars += (delta / 1e6) * p.outputPerM;
+              }
             }
           }
         } else {
@@ -444,6 +563,25 @@ async function scanFile(
             const m = ctx.byModel.get(msg.model) ?? emptyTotals();
             addUsage(m, msg.usage);
             ctx.byModel.set(msg.model, m);
+          }
+
+          // per-session bill: cost is linear in tokens, so per-record accumulation
+          // adds up to exactly what pricing the end totals would give
+          {
+            const agg = sessionAggFor(record);
+            if (agg) {
+              if (!file.isSubagent) agg.turns++;
+              if (record.timestamp) {
+                if (!agg.firstTimestamp || record.timestamp < agg.firstTimestamp) agg.firstTimestamp = record.timestamp;
+                if (!agg.lastTimestamp || record.timestamp > agg.lastTimestamp) agg.lastTimestamp = record.timestamp;
+              }
+              const p = msg.model ? resolvePricing(msg.model) : null;
+              if (p) {
+                const u = emptyTotals();
+                addUsage(u, msg.usage);
+                agg.dollars += costOfTotals(u, p).total;
+              }
+            }
           }
         }
       }
