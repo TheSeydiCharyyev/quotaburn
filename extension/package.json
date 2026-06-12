@@ -27,6 +27,11 @@
     "cost"
   ],
   "main": "./dist/extension.cjs",
+  "icon": "media/icon.png",
+  "galleryBanner": {
+    "color": "#16191f",
+    "theme": "dark"
+  },
   "activationEvents": [
     "onStartupFinished"
   ],

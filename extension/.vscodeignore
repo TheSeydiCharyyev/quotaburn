@@ -1,5 +1,7 @@
 **
 !dist/extension.cjs
+!media/icon.png
+!media/flame.svg
 !package.json
 !README.md
 !LICENSE

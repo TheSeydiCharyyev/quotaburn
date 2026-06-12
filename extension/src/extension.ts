@@ -2,6 +2,7 @@
 // and the full HTML dashboard in a webview. Reuses the CLI's core directly —
 // same scan, same numbers, same report.
 import * as vscode from 'vscode';
+import { computeAdvice, headlineText } from '../../src/advice.js';
 import { claudeProjectsDir } from '../../src/discover.js';
 import { renderHtmlReport } from '../../src/report.js';
 import { buildReportData, computeCost } from '../../src/reportdata.js';
@@ -10,9 +11,12 @@ import { scan } from '../../src/scan.js';
 const REFRESH_MINUTES = 15;
 
 let statusBar: vscode.StatusBarItem;
+let panel: vscode.WebviewPanel | undefined;
+let extensionUri: vscode.Uri;
 let extensionVersion = '0.0.0';
 
 export function activate(context: vscode.ExtensionContext): void {
+  extensionUri = context.extensionUri;
   extensionVersion = (context.extension.packageJSON as { version?: string }).version ?? '0.0.0';
 
   statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
@@ -38,6 +42,11 @@ function config(): vscode.WorkspaceConfiguration {
   return vscode.workspace.getConfiguration('quotaburn');
 }
 
+/** $12.34 below a hundred, $764 above — the status bar is not the place for cents */
+function compactUsd(n: number): string {
+  return n >= 100 ? `$${Math.round(n).toLocaleString('en-US')}` : `$${n.toFixed(2)}`;
+}
+
 async function refreshStatusBar(): Promise<void> {
   if (!config().get<boolean>('statusBar.enabled', true)) {
     statusBar.hide();
@@ -51,10 +60,14 @@ async function refreshStatusBar(): Promise<void> {
       return;
     }
     const cost = computeCost(r);
-    statusBar.text = `$(flame) $${cost.sum.total.toFixed(2)}`;
-    statusBar.tooltip = new vscode.MarkdownString(
-      `**quotaburn** — last ${days} day(s) at API list prices.\n\nClick for the full report.`,
+    const headline = headlineText(computeAdvice(r, cost.sum).headline);
+    statusBar.text = `$(flame) ${compactUsd(cost.sum.total)}`;
+    const tip = new vscode.MarkdownString(
+      `**quotaburn** — last ${days} day(s) at API list prices\n\n` +
+      `*"${headline}"*\n\n` +
+      `Click for the full report.`,
     );
+    statusBar.tooltip = tip;
     statusBar.show();
   } catch {
     // never let a parsing hiccup break someone's editor chrome
@@ -79,11 +92,19 @@ async function showReport(): Promise<void> {
         mb: Math.round(r.bytes / 1024 / 1024),
       });
 
-      const panel = vscode.window.createWebviewPanel('quotaburn', 'quotaburn', vscode.ViewColumn.One, {
-        enableScripts: true,
-        retainContextWhenHidden: true,
-        localResourceRoots: [],
-      });
+      // one panel, refreshed on every invocation — no tab pile-up
+      if (!panel) {
+        panel = vscode.window.createWebviewPanel('quotaburn', 'quotaburn', vscode.ViewColumn.One, {
+          enableScripts: true,
+          retainContextWhenHidden: true,
+          localResourceRoots: [],
+        });
+        panel.iconPath = vscode.Uri.joinPath(extensionUri, 'media', 'flame.svg');
+        panel.onDidDispose(() => { panel = undefined; });
+      } else {
+        panel.reveal(vscode.ViewColumn.One);
+      }
+
       const nonce = randomNonce();
       const kind = vscode.window.activeColorTheme.kind;
       const dark = kind === vscode.ColorThemeKind.Dark || kind === vscode.ColorThemeKind.HighContrast;
