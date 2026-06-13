@@ -1,41 +1,58 @@
-# quotaburn
+<div align="center">
 
-> I ran this on my own Claude Code history: **$3,000+ of API-priced usage — and 21% of it was rebuilding expired prompt cache after idle gaps.** One habit change saves ~$535/month.
+# 🔥 quotaburn
 
-**Other tools show how much you burned. quotaburn shows _where_ — and how to stop it.**
+**Find out _where_ your Claude Code quota burns — and how to stop it.**
 
-<!-- GIF: terminal run of `npx quotaburn` + transition to the `--html` dashboard goes here -->
+[![npm version](https://img.shields.io/npm/v/quotaburn?color=e8590c&label=npm)](https://www.npmjs.com/package/quotaburn)
+[![CI](https://github.com/TheSeydiCharyyev/quotaburn/actions/workflows/ci.yml/badge.svg)](https://github.com/TheSeydiCharyyev/quotaburn/actions/workflows/ci.yml)
+[![node](https://img.shields.io/node/v/quotaburn?color=3d8361)](https://nodejs.org)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![zero dependencies](https://img.shields.io/badge/dependencies-0-brightgreen.svg)](package.json)
 
+```sh
+npx quotaburn
 ```
+
+</div>
+
+---
+
+Most usage tools answer **how much** you burned. quotaburn answers **where it went** — which tools sit in your context window turn after turn, what resuming an idle session actually costs, how deep every session starts before you type a word — and prices each fix in dollars per month.
+
+It reads the session logs Claude Code already writes to `~/.claude/projects`. No install, no signup, no config, no network. The published package is a single readable file with zero dependencies.
+
+> Run on my own history: **~$3,000 of API-priced usage, and 21% of it was rebuilding prompt cache that expired while I was away from idle sessions.** One habit change — start fresh instead of resuming — saves ~$535/month. Your numbers will be different. That's the point.
+
+## Quick start
+
+```sh
 npx quotaburn          # terminal report
-npx quotaburn --html   # visual dashboard, opens in your browser
+npx quotaburn --html   # the same analysis as a visual dashboard, in your browser
 ```
 
-No install, no signup, no config. Reads your local Claude Code logs and answers one question: *where did my quota actually go?*
+Requires Node.js ≥ 20. Nothing is installed globally; `npx` runs it once and discards it.
 
-## What it finds
+<!-- TODO(launch): replace with a GIF — terminal run transitioning into the --html dashboard -->
+
+## What it tells you
+
+Six reports, all derived from data already on your disk:
+
+| Report | What it surfaces |
+| --- | --- |
+| **Context eaters** | Tools and MCP servers ranked by _residency_ — tokens added × turns they stayed in context. A 300 KB result on turn 3 of a 50-turn session costs ~47× its size, not 1×. |
+| **Top sessions** | Your most expensive sessions by name (the AI-generated titles Claude Code already stores), with subagent and workflow spend folded into the session that launched them. |
+| **Cache expiry** | Every time you resumed an idle session and paid to rebuild the prompt cache, at up to 2× the input price — itemized, with the worst offenders. |
+| **Startup tax** | How many tokens your system prompt + tools + skills + `CLAUDE.md` cost before your first word, and which configured MCP servers you load every session and never call. |
+| **Repeated reads** | Files read again while a full copy was already sitting in the context window. |
+| **Subagents & workflows** | What your background agents consumed, by human name (`workflow "repo-research"`, not `wf_4da6`). |
+
+### The savings ledger
+
+The headline feature is not generic advice — it's a **ledger**. Each fix is priced **per month at your own blended API rates**, projected from your actual data window, with the full calculation shown:
 
 ```
-estimated cost at API list prices:
-  total                  $3019.91
-    cache read           $1611.77   (0.1× input price)
-    cache write          $1098.54   (1.25× 5m / 2× 1h)
-    output                $306.15
-    input (uncached)        $3.46
-
-top context eaters (tokens added × turns they stayed in context):
-  ███████████████░░░░░  76.3%  Read     2,336 calls  +10,386,984 tok
-  ███░░░░░░░░░░░░░░░░░  15.0%  Bash     3,421 calls  +   955,461 tok
-  ...
-
-top sessions (top 5 = 31.0% of all spend · subagent spend folded in):
-    $218.86  Understand React Foundation project structure    646 turns
-    $209.16  Turkmen-Chinese translation app development      538 turns
-  ...
-
-cache expiry (idle gap > TTL → cache died, you paid to rebuild it):
-  rebuilt after idle      63,062,194 tok  ≈ $646.41 at API prices
-
 top fixes (savings projected from your last 36 days at your blended API rates):
   1. Don't resume idle sessions — start fresh with a short handoff   ~$535/mo
      199 rebuilds → 63,062,194 tok rewritten → $646.41 over 36 days
@@ -46,67 +63,71 @@ top fixes (savings projected from your last 36 days at your blended API rates):
    21.3% of everything you've ever spent."
 ```
 
-Six reports, all from data already sitting on your disk:
-
-1. **Top context eaters** — which tools and MCP servers actually cost you, weighted by *residency*: a tool result enters the context once but gets re-sent on every later turn. 300 KB of MCP output at turn 3 of a 50-turn session costs ~47× its size.
-2. **Top sessions** — your most expensive sessions by name (the AI-generated titles Claude Code already writes), with subagent and workflow spend folded into the session that launched them.
-3. **Repeated file reads** — the same file read 35× in one session is real money.
-4. **Cache expiry** — Anthropic's prompt cache dies after 5 minutes (or 1 hour) of idle. Come back to yesterday's session and you pay to rebuild it — at 2× the input price. quotaburn shows every one of those bills.
-5. **Session startup tax** — how many tokens your system prompt + tools + skills + CLAUDE.md eat before your first word does anything, and which configured MCP servers are dead weight you load every session and never call.
-6. **Subagents & workflows** — what your background agents really consumed, by human name (`workflow "repo-research"`, not `wf_4da6`), with each agent's task description one hover away.
-
-Plus **top fixes**: a savings ledger, not generic advice. Each fix is priced per month at *your* blended API rates, projected from *your* actual data window, with the full calculation shown — and the single biggest finding is distilled into one copy-paste-friendly headline sentence.
+That last line is your **headline** — one copy-paste-ready sentence summarizing your single biggest leak.
 
 ## The dashboard
 
-`npx quotaburn --html` renders the same analysis as a self-contained HTML file and opens it in your browser. One file, everything inline, zero external requests — it works offline and nothing ever leaves your machine. Three questions, in order: *what did my usage cost? what should I do about it? where exactly did it go?* Light and dark themes.
+`npx quotaburn --html` renders the analysis as a **self-contained HTML file** and opens it in your browser. One file, everything inlined, zero external requests — it works offline and nothing ever leaves your machine. The layout answers three questions in order: _what did my usage cost? what should I do about it? where exactly did it go?_ Light and dark themes.
 
-<!-- Screenshot: HTML dashboard hero + fixes goes here -->
+<!-- TODO(launch): screenshot of the dashboard hero + fixes -->
 
-## Privacy
+## VS Code extension
 
-- **Reads local files only** — your `~/.claude/projects` JSONL logs.
-- **Zero network calls. Zero telemetry. Zero dependencies. No postinstall scripts, no binary downloads.**
-- The published package is one small readable file — audit it in two minutes.
-- Windows, macOS, Linux — first-class everywhere (it's developed on Windows).
+The same engine, inside your editor:
 
-## Why their numbers are wrong and ours aren't
+- A **status bar** item showing your burn over the last 7 days (configurable). Hover for your headline, click for the full report.
+- The complete dashboard in a **webview**, themed to match your editor.
 
-Claude Code logs streamed messages as several records with *progressive* usage: `output_tokens` grows from chunk to chunk while input/cache fields repeat. Parsers that keep the first record undercount your output; parsers that sum every record double-count your input. quotaburn counts input once per message and accumulates output deltas to the final value. Run `npx quotaburn --explain` for the full methodology — including its honest caveats (residency is an estimate, cache rebuild numbers are an upper bound).
+The extension lives in [`extension/`](extension/). It is not yet on the Marketplace; build it locally with `cd extension && npm install && npm run package`, then **Extensions: Install from VSIX…**.
 
-## Usage
+## Why you can trust the numbers
+
+quotaburn is built to be auditable, because a tool that reports on your spend has to be.
+
+- **Local only.** It reads `~/.claude/projects` and nothing else. Zero network calls, zero telemetry.
+- **Zero dependencies.** No transitive supply chain, no postinstall scripts, no binary downloads.
+- **Readable.** The published bundle is a single un-minified file — audit it in two minutes.
+- **Honest.** `quotaburn --explain` documents the methodology _and_ its caveats: residency is an estimate, cache-rebuild figures are an upper bound, unknown models are excluded rather than guessed.
+
+One thing other parsers get wrong: Claude Code logs a streamed message as several records with **progressive** usage — `output_tokens` grows from record to record while input fields repeat. Count naively and you either double-count input or undercount output. quotaburn counts input once per message and accumulates output deltas. The full reasoning is in [docs/METHODOLOGY.md](docs/METHODOLOGY.md).
+
+## CLI reference
 
 ```
 quotaburn [options]
 
   --days N          analyze only the last N days (default: full history)
-  --project <path>  only sessions of the given project
-  --html            self-contained visual report, opens in your browser
+  --project <path>  only sessions of the given project (path or fragment)
+  --html            write a self-contained HTML report and open it
   --json            machine-readable output
-  --explain         print methodology and caveats
+  --explain         print methodology and honest caveats, then exit
+  -v, --version     print version
+  -h, --help        show help
 ```
 
-## FAQ
+The dollar figures are the **API-list-price value** of your usage. Subscription plans don't bill per token — but your _limits_ are denominated in compute, so cutting the waste quotaburn finds means hitting your limits later. See the [FAQ](docs/FAQ.md).
 
-**I'm on a Pro/Max subscription — do these dollars mean anything?**
-You don't pay per token, but your *limits* are denominated in compute. The dollar figures show the API-price value of your usage — the same flex as ccusage, plus an explanation of where it went. Cutting the waste quotaburn finds means hitting your limits later.
+## Documentation
 
-**Does it work on Windows?**
-First-class. It's developed on Windows and CI-tested on Windows and Linux.
-
-**How is this different from ccusage / claude-hud?**
-They answer *how much* (totals, live status bar). quotaburn answers *where and why* — attribution by tool, by MCP server, by habit. Use them together: they're complementary, not competing.
+- [Methodology](docs/METHODOLOGY.md) — exactly how every number is computed, and where the estimates are.
+- [Architecture](docs/ARCHITECTURE.md) — the parsing pipeline and how the pieces fit.
+- [FAQ](docs/FAQ.md) — subscriptions, accuracy, other tools, supported platforms.
+- [Contributing](CONTRIBUTING.md) — dev setup, tests, and what belongs in scope.
+- [Changelog](CHANGELOG.md)
 
 ## Roadmap
 
-- **Statusline mode** — your burn rate living inside Claude Code's status line, all day.
+- **Statusline mode** — your burn rate inside Claude Code's status line, all day.
 - **`--compare`** — did your fixes work? Last 7 days vs the 7 before, in dollars.
-- **Shareable burn card** — one image, your three wildest numbers, paths redacted.
-- **More agents** — Codex CLI, Gemini CLI, opencode adapters: same residency model, their logs.
-- **Team mode** — a CI bot that says *"this PR cost $14"*, built on the JSON output.
+- **Shareable card** — your three wildest numbers as one image, paths redacted.
+- **More agents** — Codex CLI, Gemini CLI, opencode: the residency model is agent-agnostic.
 
-Want one of these first? Open an issue.
+Want one first? [Open an issue.](https://github.com/TheSeydiCharyyev/quotaburn/issues)
+
+## Contributing
+
+Bug reports from other people's logs are the most valuable contribution — log formats drift across Claude Code versions and machines, and parsing edge cases are exactly what I want to catch. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-MIT
+[MIT](LICENSE) © Seydi Charyyev
