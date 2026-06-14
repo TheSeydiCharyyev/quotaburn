@@ -24,3 +24,30 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+      # run the BUILT bundle, not just src — catches anything that survives tsc but
+      # breaks the shipped artifact
+      - run: node dist/cli.js --version
+      - run: node dist/cli.js --explain
+      - name: smoke-test the built CLI end to end on fixtures
+        env:
+          CLAUDE_CONFIG_DIR: ${{ github.workspace }}/tests/fixtures
+        run: node dist/cli.js --json
+
+  extension:
+    name: extension build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
+      # the extension imports the CLI core via ../../src/*.js, so this fails if an
+      # export signature changes underneath it
+      - run: npm ci
+        working-directory: extension
+      - run: npm run typecheck
+        working-directory: extension
+      - run: npm run build
+        working-directory: extension
