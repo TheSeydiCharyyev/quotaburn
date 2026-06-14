@@ -86,10 +86,13 @@ describe('scan on fixtures', () => {
 
   test('cache expiry: 2h gap with 1h TTL bills the rebuild', () => {
     expect(r.cache.expiryEvents).toBe(1);
-    expect(r.cache.recreationTokens).toBe(30000);
+    // the turn writes 30000 cache_creation, but the context before the gap was only
+    // 21550 tok (input 50 + cache_read 21000 + cache_creation 500) — the rebuild is
+    // capped at what was actually cached; the extra 8450 is new content, not a rebuild
+    expect(r.cache.recreationTokens).toBe(21550);
     expect(r.cache.avoidableWith1h).toBe(0); // TTL was already 1h
-    // 30000 tok × $5/M input × 2 (1h write) = $0.30
-    expect(r.cache.recreationDollars).toBeCloseTo(0.3, 5);
+    // 21550 tok × $5/M input × 2 (1h write) = $0.2155
+    expect(r.cache.recreationDollars).toBeCloseTo(0.2155, 5);
     expect(r.cache.topEvents[0]).toMatchObject({ ttl: '1h', model: 'claude-opus-4-8', gapMinutes: 120 });
   });
 

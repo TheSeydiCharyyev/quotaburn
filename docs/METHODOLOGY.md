@@ -83,7 +83,8 @@ Anthropic's prompt cache has a TTL — 5 minutes by default, 1 hour when 1h cach
 quotaburn detects this by the time gap between consecutive turns. When the gap exceeds the live TTL, the `cache_creation` tokens on the first turn after the gap are billed as **rebuild cost**, and the event is recorded (when, how long idle, how many tokens, which model).
 
 - **`avoidable with 1h TTL`** isolates the rebuilds where the gap was ≤ 1 hour and the TTL was only 5 minutes — i.e. what a longer TTL would have saved ([anthropics/claude-code#46829](https://github.com/anthropics/claude-code/issues/46829)). When this is small, the lesson isn't "use a longer TTL," it's "don't resume stale sessions."
-- **Upper bound.** The first turn after a gap usually contains *some* genuinely new content too, so attributing all of its `cache_creation` to the rebuild slightly overstates the avoidable part. quotaburn says so rather than hiding it.
+- **Capped at the prior context size.** A rebuild can't recreate more cache than was alive before the gap, so the billed amount is capped at the context size carried into the gap. If you pasted a large document on the first turn back, that excess `cache_creation` is genuinely new content and is *not* counted as a rebuild. (Right after a compaction there's no prior size to bound against, so the raw figure is used rather than under-counting.)
+- **Still a mild upper bound.** Even within the cap, the first turn back can mix a little new content with the rebuild, so the figure leans high rather than low.
 
 ## Startup tax
 
@@ -130,7 +131,7 @@ The specific projections are estimates of *future* savings assuming your recent 
 quotaburn would rather under-claim than mislead. The honest limits:
 
 - **Residency is an estimate.** Tool-result token sizes are approximated at ~4 chars/token; the model attributes cost, it doesn't reproduce an invoice.
-- **Cache-rebuild figures are an upper bound.** The first post-idle turn mixes genuine new content with the rebuild.
+- **Cache-rebuild figures lean high.** They're capped at the pre-gap context size (pasted content isn't billed as a rebuild), but within that cap the first turn back can still mix a little new content in.
 - **Dollars are API-list-price value.** Not what a subscription charged you. Unknown-model usage is excluded, so totals are a floor.
 - **Compaction detection is partly heuristic.** The "context dropped below half" rule can, in principle, misfire on an unusual session shape.
 - **Savings projections assume your recent window repeats.** A one-off heavy week projects a heavy month.

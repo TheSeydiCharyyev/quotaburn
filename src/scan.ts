@@ -503,6 +503,10 @@ async function scanFile(
         } else {
           seenUsage.set(usageKey, msg.usage.output_tokens ?? 0);
 
+          // context carried into this turn, captured before prevCtxSize is overwritten —
+          // used to bound the post-idle cache rebuild below
+          const ctxBeforeThisTurn = prevCtxSize;
+
           // heuristic reset detection: context size collapsed vs the previous turn
           const ctxSize =
             (msg.usage.input_tokens ?? 0) +
@@ -529,7 +533,15 @@ async function scanFile(
               const gapMs = ts - prevTurnTs;
               const ttlMs = ttlMode === '1h' ? TTL_1H_MS : TTL_5M_MS;
               if (gapMs > ttlMs) {
-                const recreation = cacheCreationTotal(msg.usage);
+                // a rebuild can't recreate more cache than was alive before the gap;
+                // cache_creation beyond the prior context size is genuinely new content
+                // added during the pause, not a rebuild. right after a compaction there
+                // is no prior size to bound against, so fall back to the raw figure
+                // rather than under-count.
+                const rawRecreation = cacheCreationTotal(msg.usage);
+                const recreation = ctxBeforeThisTurn > 0
+                  ? Math.min(rawRecreation, ctxBeforeThisTurn)
+                  : rawRecreation;
                 if (recreation > 0) {
                   ctx.cacheEvents.push({
                     sessionId: record.sessionId ?? '?',

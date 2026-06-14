@@ -116,6 +116,34 @@ describe('edge cases never crash and never produce absurd numbers', () => {
     expectSane(r); // orphan tool_result (no matching tool_use) is ignored
   });
 
+  test('post-idle rebuild is capped at the prior context size', async () => {
+    const turn = (id: string, ts: string, cacheCreation: number): string =>
+      JSON.stringify({
+        type: 'assistant', sessionId: 's1', uuid: id, requestId: id, timestamp: ts,
+        message: {
+          id, model: 'claude-opus-4-8', role: 'assistant', content: [],
+          usage: {
+            input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0,
+            cache_creation: { ephemeral_5m_input_tokens: cacheCreation, ephemeral_1h_input_tokens: 0 },
+          },
+        },
+      });
+    // turn 1 establishes a ~100k context; turn 2, after a 10-min idle gap (> 5m TTL),
+    // writes 500k of cache — but 400k of that is a document pasted during the pause,
+    // not a rebuild. the rebuild can't exceed the ~100k that was cached before.
+    const lines = [
+      turn('c1', '2026-01-01T12:00:00.000Z', 100_000),
+      turn('c2', '2026-01-01T12:10:00.000Z', 500_000),
+    ].join('\n');
+    const r = await scan(await makeProject({ 'a.jsonl': lines }));
+    expect(r.cache.expiryEvents).toBe(1);
+    // prevCtxSize after turn 1 = input 1 + cache_read 0 + cache_creation 100000
+    expect(r.cache.recreationTokens).toBe(100_001);
+    // a 5m TTL with a ≤1h gap → fully counted as what a 1h TTL would have saved (#46829)
+    expect(r.cache.avoidableWith1h).toBe(100_001);
+    expectSane(r);
+  });
+
   test('usage with absent output on later chunks never goes negative', async () => {
     const chunk = (out: number | undefined): string =>
       JSON.stringify({
