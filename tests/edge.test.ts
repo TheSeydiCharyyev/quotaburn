@@ -144,6 +144,48 @@ describe('edge cases never crash and never produce absurd numbers', () => {
     expectSane(r);
   });
 
+  test('ttlMode resets to 5m after a compaction, so a post-reset 5m expiry is caught', async () => {
+    const turn = (id: string, ts: string, usage: Record<string, unknown>): string =>
+      JSON.stringify({
+        type: 'assistant', sessionId: 's1', uuid: id, requestId: id, timestamp: ts,
+        message: { id, model: 'claude-opus-4-8', role: 'assistant', content: [], usage },
+      });
+    const compact = (ts: string): string =>
+      JSON.stringify({ type: 'system', subtype: 'compact_boundary', sessionId: 's1', uuid: 'cb', timestamp: ts });
+    const lines = [
+      // turn 1 writes a 1h cache → ttlMode latches to 1h
+      turn('t1', '2026-01-01T10:00:00.000Z', { input_tokens: 1, output_tokens: 1, cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 50000 } }),
+      compact('2026-01-01T10:00:10.000Z'),
+      // turn 2: 20-min gap, fresh 5m cache. With ttlMode reset to 5m this is an expiry;
+      // had ttlMode stayed 1h, a 20-min gap would be under the TTL and silently missed.
+      turn('t2', '2026-01-01T10:20:00.000Z', { input_tokens: 1, output_tokens: 1, cache_creation: { ephemeral_5m_input_tokens: 8000, ephemeral_1h_input_tokens: 0 } }),
+    ].join('\n');
+    const r = await scan(await makeProject({ 'a.jsonl': lines }));
+    expect(r.cache.expiryEvents).toBe(1);
+    expect(r.cache.topEvents[0]).toMatchObject({ ttl: '5m', gapMinutes: 20 });
+    expectSane(r);
+  });
+
+  test('streamed chunks dedupe by requestId when message.id is absent', async () => {
+    const chunk = (uuid: string, out: number): string =>
+      JSON.stringify({
+        type: 'assistant', sessionId: 's1', uuid, requestId: 'rq',
+        message: {
+          model: 'claude-opus-4-8', role: 'assistant', content: [], // no message.id
+          usage: { input_tokens: 100, output_tokens: out, cache_read_input_tokens: 5000 },
+        },
+      });
+    // three chunks of one streamed message, no message.id — must dedupe on requestId,
+    // counting input/cache once and output as the final value, not summing every chunk
+    const lines = [chunk('x1', 5), chunk('x2', 30), chunk('x3', 60)].join('\n');
+    const r = await scan(await makeProject({ 'a.jsonl': lines }));
+    expect(r.assistantTurns).toBe(1);
+    expect(r.totals.inputUncached).toBe(100); // once, not 300
+    expect(r.totals.cacheRead).toBe(5000); // once, not 15000
+    expect(r.totals.output).toBe(60); // final value, not 5 + 30 + 60
+    expectSane(r);
+  });
+
   test('usage with absent output on later chunks never goes negative', async () => {
     const chunk = (out: number | undefined): string =>
       JSON.stringify({

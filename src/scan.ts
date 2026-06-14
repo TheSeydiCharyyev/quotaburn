@@ -454,6 +454,7 @@ async function scanFile(
     if (isCompactMarker) {
       settleResidency(turn);
       prevCtxSize = 0;
+      ttlMode = '5m'; // the post-compaction cache is written fresh at the default TTL
       ctx.onContextReset();
       continue;
     }
@@ -479,7 +480,10 @@ async function scanFile(
         }
       }
       if (msg.usage) {
-        const usageKey = `${msg.id ?? record.uuid}:${record.requestId ?? ''}`;
+        // dedupe streamed chunks by message.id; if a future format ever drops it,
+        // fall back to requestId (also stable per message) before per-record uuid —
+        // a uuid fallback would treat every chunk as a new message and double-count
+        const usageKey = `${msg.id ?? record.requestId ?? record.uuid}:${record.requestId ?? ''}`;
         const prevOutput = seenUsage.get(usageKey);
         if (prevOutput !== undefined) {
           // later record of an already-counted message: take only the output growth
@@ -514,6 +518,7 @@ async function scanFile(
             cacheCreationTotal(msg.usage);
           if (prevCtxSize >= RESET_MIN_BASE_TOKENS && ctxSize < prevCtxSize / 2) {
             settleResidency(turn);
+            ttlMode = '5m'; // context was rebuilt fresh; the new cache starts at the default TTL
             ctx.onContextReset();
           }
           prevCtxSize = ctxSize;
