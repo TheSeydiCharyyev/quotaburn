@@ -91,6 +91,8 @@ quotaburn is built to be auditable, because a tool that reports on your spend ha
 
 One thing other parsers get wrong: Claude Code logs a streamed message as several records with **progressive** usage — `output_tokens` grows from record to record while input fields repeat. Count naively and you either double-count input or undercount output. quotaburn counts input once per message and accumulates output deltas. The full reasoning is in [docs/METHODOLOGY.md](docs/METHODOLOGY.md).
 
+Want to rebuild this math from first principles? The token-estimation, cost, prompt-cache, and streaming-metrics model exists as a dependency-free reference implementation in [build-your-own-agent §7](https://github.com/TheSeydiCharyyev/build-your-own-agent#7-token-accounting-streaming--cache).
+
 ## CLI reference
 
 ```
