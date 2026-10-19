@@ -202,3 +202,105 @@ describe('edge cases never crash and never produce absurd numbers', () => {
     expectSane(r);
   });
 });
+
+describe('placeholder assistant records (failed requests) are not context resets', () => {
+  const NL = String.fromCharCode(10);
+
+  // a 120k-token turn that can drop a 4,000-char tool result into context
+  const big = (uuid: string, toolId?: string): string =>
+    JSON.stringify({
+      type: 'assistant',
+      sessionId: 's1',
+      uuid,
+      timestamp: '2026-10-19T10:00:00.000Z',
+      message: {
+        id: uuid,
+        model: 'claude-opus-5-5',
+        role: 'assistant',
+        content: toolId ? [{ type: 'tool_use', id: toolId, name: 'Bash', input: {} }] : [],
+        usage: { input_tokens: 0, output_tokens: 10, cache_read_input_tokens: 120_000 },
+      },
+    });
+
+  const result = (toolId: string): string =>
+    JSON.stringify({
+      type: 'user',
+      sessionId: 's1',
+      uuid: 'r-' + toolId,
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolId, content: 'x'.repeat(4000) }] },
+    });
+
+  // Claude Code's own shape for a request that never answered
+  const synthetic = (uuid: string, text: string): string =>
+    JSON.stringify({
+      type: 'assistant',
+      sessionId: 's1',
+      uuid,
+      timestamp: '2026-10-19T10:01:00.000Z',
+      isApiErrorMessage: true,
+      message: {
+        id: uuid,
+        model: '<synthetic>',
+        role: 'assistant',
+        content: [{ type: 'text', text }],
+        usage: { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+      },
+    });
+
+  test('a <synthetic> error record does not settle residency', async () => {
+    const log = [
+      big('m1', 't1'),
+      result('t1'),
+      synthetic('m2', 'API Error: Connection lost mid-response.'),
+      big('m3'),
+      big('m4'),
+    ].join(NL);
+    const r = await scan(await makeProject({ 'a.jsonl': log }));
+    expect(r.contextResets).toBe(0);
+    // the 4,000-char result rode turns m3 and m4: 1,000 tokens x 2 turns
+    const bash = r.tools.find((t) => t.name === 'Bash');
+    expect(bash?.addedTokens).toBe(1000);
+    expect(bash?.residencyCost).toBe(2000);
+    expectSane(r);
+  });
+
+  test('placeholders are not turns and never reach the model breakdown', async () => {
+    const log = [
+      big('m1'),
+      synthetic('m2', 'No response requested.'),
+      synthetic('m3', 'Failed to authenticate: OAuth session expired.'),
+      big('m4'),
+    ].join(NL);
+    const r = await scan(await makeProject({ 'a.jsonl': log }));
+    expect(r.assistantTurns).toBe(2);
+    expect([...r.byModel.keys()]).toEqual(['claude-opus-5-5']);
+    expect(r.contextResets).toBe(0);
+  });
+
+  test('one compaction is one reset, not one per marker record', async () => {
+    // Claude Code writes both a system compact_boundary and a user isCompactSummary
+    const boundary = JSON.stringify({ type: 'system', sessionId: 's1', uuid: 'c1', subtype: 'compact_boundary' });
+    const summary = JSON.stringify({ type: 'user', sessionId: 's1', uuid: 'c2', isCompactSummary: true, message: { role: 'user', content: 'summary' } });
+    const log = [big('m1'), boundary, summary, big('m2')].join(NL);
+    const r = await scan(await makeProject({ 'a.jsonl': log }));
+    expect(r.contextResets).toBe(1);
+  });
+  test('a real context collapse is still detected', async () => {
+    const small = JSON.stringify({
+      type: 'assistant',
+      sessionId: 's1',
+      uuid: 'm3',
+      timestamp: '2026-10-19T10:02:00.000Z',
+      message: {
+        id: 'm3',
+        model: 'claude-opus-5-5',
+        role: 'assistant',
+        content: [],
+        usage: { input_tokens: 0, output_tokens: 5, cache_read_input_tokens: 0, cache_creation: { ephemeral_5m_input_tokens: 10_000 } },
+      },
+    });
+    const log = [big('m1'), synthetic('m2', 'API Error: overloaded'), small].join(NL);
+    const r = await scan(await makeProject({ 'a.jsonl': log }));
+    expect(r.contextResets).toBe(1);
+  });
+});

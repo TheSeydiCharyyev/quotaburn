@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 import { discoverSessionFiles } from './discover.js';
 import { parseSessionFile, type ParseStats } from './parser.js';
 import { CACHE_WRITE_1H_MULT, CACHE_WRITE_5M_MULT, costOfTotals, resolvePricing } from './pricing.js';
-import type { SessionFile, ToolResultBlock, ToolUseBlock, Usage } from './types.js';
+import type { LogMessage, SessionFile, ToolResultBlock, ToolUseBlock, Usage } from './types.js';
 
 export interface TokenTotals {
   output: number;
@@ -373,6 +373,28 @@ function cacheCreationTotal(u: Usage): number {
   return u.cache_creation_input_tokens ?? 0;
 }
 
+/**
+ * Claude Code writes a placeholder assistant record when a request never
+ * produced a response — "API Error: Connection lost mid-response.",
+ * "No response requested." after an interrupt, an expired OAuth session.
+ * They carry model "<synthetic>" and an all-zero usage object.
+ *
+ * They are not turns, and — this is the part that matters — their zero
+ * context size must not be read as "the context was reset", which would
+ * settle every tool result still riding in the window.
+ */
+function isPlaceholderAssistant(msg: LogMessage): boolean {
+  if (msg.model === '<synthetic>') return true;
+  const u = msg.usage;
+  if (!u) return false;
+  return (
+    (u.input_tokens ?? 0) === 0 &&
+    (u.output_tokens ?? 0) === 0 &&
+    (u.cache_read_input_tokens ?? 0) === 0 &&
+    cacheCreationTotal(u) === 0
+  );
+}
+
 async function scanFile(
   file: SessionFile,
   ctx: FileScanContext,
@@ -392,6 +414,11 @@ async function scanFile(
   let turn = 0;
   let prevTurnTs: number | null = null;
   let prevCtxSize = 0;
+  // turns counted since the last settle. One compaction writes two records
+  // (a system compact_boundary and a user isCompactSummary), and the first
+  // turn after it can also look like a context collapse — without this,
+  // one compaction is reported as two or three resets.
+  let turnsSinceReset = 0;
 
   // everything a session spends — its own turns and its subagents' — rolls up to the
   // main session: subagent files carry the parent id, main files their own sessionId
@@ -452,15 +479,20 @@ async function scanFile(
       (record.type === 'user' && record.isCompactSummary === true) ||
       (record.type === 'system' && record.subtype === 'compact_boundary');
     if (isCompactMarker) {
-      settleResidency(turn);
+      if (turnsSinceReset > 0) {
+        settleResidency(turn);
+        ctx.onContextReset();
+        turnsSinceReset = 0;
+      }
       prevCtxSize = 0;
       ttlMode = '5m'; // the post-compaction cache is written fresh at the default TTL
-      ctx.onContextReset();
       continue;
     }
 
     if (record.type === 'assistant' && record.message) {
       const msg = record.message;
+      // a failed request: no usage, no tools, and no readable context size
+      if (isPlaceholderAssistant(msg)) continue;
       if (Array.isArray(msg.content)) {
         for (const block of msg.content) {
           if (block.type !== 'tool_use') continue;
@@ -517,13 +549,17 @@ async function scanFile(
             (msg.usage.cache_read_input_tokens ?? 0) +
             cacheCreationTotal(msg.usage);
           if (prevCtxSize >= RESET_MIN_BASE_TOKENS && ctxSize < prevCtxSize / 2) {
-            settleResidency(turn);
+            if (turnsSinceReset > 0) {
+              settleResidency(turn);
+              ctx.onContextReset();
+              turnsSinceReset = 0;
+            }
             ttlMode = '5m'; // context was rebuilt fresh; the new cache starts at the default TTL
-            ctx.onContextReset();
           }
           prevCtxSize = ctxSize;
 
           turn++;
+          turnsSinceReset++;
           ctx.onTurn();
 
           if (record.timestamp) {
