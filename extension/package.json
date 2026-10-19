@@ -2,7 +2,7 @@
   "name": "quotaburn-vscode",
   "displayName": "quotaburn",
   "description": "See where your Claude Code quota burns — live burn figure in the status bar, full local dashboard one click away. Zero network, zero telemetry.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "TheSeydiCharyyev",
   "private": true,
   "type": "module",
