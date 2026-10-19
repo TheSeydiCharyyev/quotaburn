@@ -6,7 +6,7 @@ You don't pay per token, so the figures aren't a bill. But your **limits** are d
 
 ### Are the numbers exact?
 
-Token totals and dollars are computed precisely from the `usage` blocks Claude Code records (see [usage deduplication](METHODOLOGY.md#usage-deduplication)). Two things are deliberately *estimates*, and labeled as such: **residency** (tool-result sizes are approximated at ~4 chars/token) and **cache-rebuild cost** (an upper bound — the first post-idle turn mixes new content with the rebuild). Unknown-model usage is excluded, so totals are a floor, never inflated. Full detail in [METHODOLOGY.md](METHODOLOGY.md#caveats-in-one-place).
+Token totals and dollars are computed precisely from the `usage` blocks Claude Code records (see [usage deduplication](METHODOLOGY.md#usage-deduplication)). Two things are deliberately *estimates*, and labeled as such: **residency** (text tool results are sized at ~2.5 chars/token, images by their pixel dimensions) and **cache-rebuild cost** (an upper bound — the first post-idle turn mixes new content with the rebuild). Unknown-model usage is excluded, so totals are a floor, never inflated. Full detail in [METHODOLOGY.md](METHODOLOGY.md#caveats-in-one-place).
 
 ### My numbers look wrong / it crashed on my logs.
 

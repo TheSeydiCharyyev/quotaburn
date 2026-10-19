@@ -70,18 +70,18 @@ describe('scan on fixtures', () => {
   });
 
   test('residency attribution settles at the compact boundary', () => {
-    // tool results: tu1 10tok@turn1, tu2 10tok@turn2, tu3 50tok@turn3;
-    // compact marker arrives at turn 3 → costs 10×(3-1) + 10×(3-2) = 30 for Read, 50×0 = 0 for MCP
+    // 40-char results at 2.5 chars/token: tu1 16tok@turn1, tu2 16tok@turn2, tu3 80tok@turn3;
+    // compact marker arrives at turn 3 → costs 16×(3-1) + 16×(3-2) = 48 for Read, 80×0 = 0 for MCP
     const read = r.tools.find((t) => t.name === 'Read');
-    expect(read).toMatchObject({ calls: 2, addedTokens: 20, residencyCost: 30 });
+    expect(read).toMatchObject({ calls: 2, addedTokens: 32, residencyCost: 48 });
     const mcp = r.tools.find((t) => t.name === 'MCP: github');
-    expect(mcp).toMatchObject({ calls: 1, addedTokens: 50, residencyCost: 0 });
+    expect(mcp).toMatchObject({ calls: 1, addedTokens: 80, residencyCost: 0 });
     expect(r.contextResets).toBe(1);
   });
 
   test('repeated reads of the same file are detected', () => {
     expect(r.repeatedReads).toHaveLength(1);
-    expect(r.repeatedReads[0]).toMatchObject({ filePath: '/tmp/a.txt', reads: 2, wastedTokens: 10 });
+    expect(r.repeatedReads[0]).toMatchObject({ filePath: '/tmp/a.txt', reads: 2, wastedTokens: 16 });
   });
 
   test('cache expiry: 2h gap with 1h TTL bills the rebuild', () => {

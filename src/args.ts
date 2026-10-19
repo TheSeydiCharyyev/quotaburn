@@ -74,8 +74,11 @@ residency cost (the "top context eaters" report)
   tokens × turns-it-stayed. Residency is settled at compaction/reset
   boundaries, detected two ways: explicit markers (summary records,
   isCompactSummary, compact_boundary) and a heuristic — the context
-  shrinking below half of a ≥80k-token base. This is an estimate, not an
-  invoice; tool result sizes are estimated at ~4 chars/token.
+  shrinking below half of a ≥80k-token base. Placeholder records for failed
+  requests (model "<synthetic>", zero usage) are skipped, not read as a
+  reset. This is an estimate, not an invoice: text results are sized at
+  ~2.5 chars/token on the current tokenizer (~4 on Sonnet 4.6 and earlier),
+  and images by their pixel dimensions, not their base64 length.
 
 cache expiry (the "rebuilt after idle" report)
   Anthropic's prompt cache expires after its TTL (5 minutes by default,

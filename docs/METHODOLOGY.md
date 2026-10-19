@@ -132,10 +132,10 @@ The specific projections are estimates of *future* savings assuming your recent 
 
 quotaburn would rather under-claim than mislead. The honest limits:
 
-- **Residency is an estimate.** Tool-result token sizes are approximated at ~4 chars/token; the model attributes cost, it doesn't reproduce an invoice.
+- **Residency is an estimate.** Text tool results are sized at ~2.5 characters per token — the ratio Anthropic documents for the tokenizer introduced with Claude Opus 4.7 (~4 for Sonnet 4.6 and earlier, chosen per the model that answered the turn). Code and JSON pack denser than prose, so these counts are a floor. Images are sized from the pixel dimensions in their header, since the API prices them by area, not by the length of their base64; an image whose header cannot be read is counted at a flat 1,600 tokens. The model attributes cost, it does not reproduce an invoice.
 - **Cache-rebuild figures lean high.** They're capped at the pre-gap context size (pasted content isn't billed as a rebuild), but within that cap the first turn back can still mix a little new content in.
 - **Dollars are API-list-price value.** Not what a subscription charged you. Unknown-model usage is excluded, so totals are a floor.
-- **Compaction detection is partly heuristic.** The "context dropped below half" rule can, in principle, misfire on an unusual session shape.
+- **Compaction detection is partly heuristic.** The "context dropped below half" rule can, in principle, misfire on an unusual session shape. Claude Code also removes content without recording it — it clears older tool outputs before compacting, and drops the oldest images past the per-request limit — so a result can be billed residency for a few turns after it actually left the window.
 - **Savings projections assume your recent window repeats.** A one-off heavy week projects a heavy month.
 
 If a number still looks wrong on your machine, that's a bug worth reporting — see [CONTRIBUTING.md](../CONTRIBUTING.md).

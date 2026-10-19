@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path';
 import { discoverSessionFiles } from './discover.js';
 import { parseSessionFile, type ParseStats } from './parser.js';
 import { CACHE_WRITE_1H_MULT, CACHE_WRITE_5M_MULT, costOfTotals, resolvePricing } from './pricing.js';
+import { CHARS_PER_TOKEN_CURRENT, charsPerTokenFor, estimateContentTokens } from './tokens.js';
 import type { LogMessage, SessionFile, ToolResultBlock, ToolUseBlock, Usage } from './types.js';
 
 export interface TokenTotals {
@@ -134,13 +135,6 @@ function addUsage(t: TokenTotals, u: Usage): void {
     // older log versions only have the flat field; bucket it as 5m (the default TTL)
     t.cacheCreation5m += u.cache_creation_input_tokens ?? 0;
   }
-}
-
-/** ~4 chars per token — fine for ranking; we are attributing, not billing. */
-function estimateTokens(value: unknown): number {
-  if (value == null) return 0;
-  const text = typeof value === 'string' ? value : JSON.stringify(value);
-  return Math.round(text.length / 4);
 }
 
 function displayName(toolName: string): string {
@@ -414,6 +408,8 @@ async function scanFile(
   let turn = 0;
   let prevTurnTs: number | null = null;
   let prevCtxSize = 0;
+  // the tokenizer of the model answering this session, for sizing tool results
+  let charsPerToken = CHARS_PER_TOKEN_CURRENT;
   // turns counted since the last settle. One compaction writes two records
   // (a system compact_boundary and a user isCompactSummary), and the first
   // turn after it can also look like a context collapse — without this,
@@ -493,6 +489,7 @@ async function scanFile(
       const msg = record.message;
       // a failed request: no usage, no tools, and no readable context size
       if (isPlaceholderAssistant(msg)) continue;
+      if (msg.model) charsPerToken = charsPerTokenFor(msg.model);
       if (Array.isArray(msg.content)) {
         for (const block of msg.content) {
           if (block.type !== 'tool_use') continue;
@@ -644,7 +641,7 @@ async function scanFile(
         const tr = block as ToolResultBlock;
         const toolName = toolUseNames.get(tr.tool_use_id);
         if (!toolName) continue;
-        const tokens = estimateTokens(tr.content);
+        const tokens = estimateContentTokens(tr.content, charsPerToken);
         pending.push({ tokens, turnAdded: turn, displayName: displayName(toolName) });
         const readPath = toolUseReadPath.get(tr.tool_use_id);
         if (readPath) {

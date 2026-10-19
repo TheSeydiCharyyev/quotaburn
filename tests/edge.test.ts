@@ -257,10 +257,10 @@ describe('placeholder assistant records (failed requests) are not context resets
     ].join(NL);
     const r = await scan(await makeProject({ 'a.jsonl': log }));
     expect(r.contextResets).toBe(0);
-    // the 4,000-char result rode turns m3 and m4: 1,000 tokens x 2 turns
+    // the 4,000-char result rode turns m3 and m4: 1,600 tokens x 2 turns
     const bash = r.tools.find((t) => t.name === 'Bash');
-    expect(bash?.addedTokens).toBe(1000);
-    expect(bash?.residencyCost).toBe(2000);
+    expect(bash?.addedTokens).toBe(1600);
+    expect(bash?.residencyCost).toBe(3200);
     expectSane(r);
   });
 
