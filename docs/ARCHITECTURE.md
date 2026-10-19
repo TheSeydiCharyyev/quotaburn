@@ -31,7 +31,8 @@ discover ──▶ parser ──▶ scan ──▶ reportdata ──▶ report �
 | `parser.ts` | Stream a file into typed `LogRecord`s, tracking line/parse/skip stats. The only place raw JSON is touched. |
 | `types.ts` | The shape of a log record and its `usage` block. The contract with the undocumented format lives here. |
 | `scan.ts` | The engine. One streaming pass that produces every aggregate: token totals, per-model and per-session cost, tool residency, repeated reads, cache-expiry events, startup tax, MCP calls, subagent groups. |
-| `pricing.ts` | Model → price table, longest-prefix resolution, and `costOfTotals` (token totals → dollar breakdown). |
+| `pricing.ts` | Model → price table, prefix resolution that stops at a version boundary (so `claude-opus-5-5` cannot inherit `claude-opus-5`), the per-model cache-read rate, and `costOfTotals` (token totals → dollar breakdown). |
+| `tokens.ts` | Estimating what the logs do not count: characters per token for the answering model’s tokenizer, and image blocks sized from their PNG/JPEG/GIF header instead of their base64 length. |
 | `advice.ts` | The savings ledger and the headline — pure functions over a `ScanResult` + cost. No I/O. |
 | `mcpconfig.ts` | Read configured MCP servers from `.claude.json` for the configured-vs-used audit. |
 | `reportdata.ts` | `buildReportData` + `computeCost`: assemble the `ReportData` object both the CLI and the extension feed to the renderer. |
@@ -51,7 +52,7 @@ Two types are worth knowing before touching the engine:
 - **`ScanResult`** (`scan.ts`) — the computation-shaped output: token totals, `Map`s of per-model and per-session stats, sorted arrays of tools / reads / cache events / subagent groups, and the overall first/last timestamps that anchor projections.
 - **`ReportData`** (`report.ts`) — the render-shaped, fully serializable view, including the precomputed `headline` and `fixes` from `advice.ts`.
 
-The streaming pass in `scan.ts` is the heart of the project. It maintains per-file state (one `.jsonl` = one context window) and threads shared accumulators through a `FileScanContext`. The progressive-usage dedup, the residency settling, and the cache-TTL state machine all live in `scanFile`.
+The streaming pass in `scan.ts` is the heart of the project. It maintains per-file state (one `.jsonl` = one context window) and threads shared accumulators through a `FileScanContext`. The progressive-usage dedup, the residency settling, and the cache-TTL state machine all live in `scanFile`. Two kinds of record are deliberately skipped there: placeholder assistant records for requests that never answered (model `<synthetic>`, all-zero usage), whose zero context size would otherwise read as a reset, and Claude Code’s `file_unchanged` read stubs, which re-add nothing.
 
 ## Surfaces
 
