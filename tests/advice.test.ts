@@ -94,3 +94,21 @@ describe('computeAdvice', () => {
     expect(headlineText(advice.headline)).toContain('Clean burn');
   });
 });
+
+describe('the headline states the window it measured', () => {
+  it('names the scanned window instead of claiming all-time spend', () => {
+    const r = makeResult({
+      cache: {
+        expiryEvents: 10,
+        recreationTokens: 5_000_000,
+        avoidableWith1h: 0,
+        recreationDollars: 200, // 20% of total
+        topEvents: [],
+      },
+    });
+    const text = headlineText(computeAdvice(r, makeCost()).headline);
+    expect(text).toContain('20.0% of what you spent in the last 15 days');
+    // the figure covers the scan window, and Claude Code keeps only recent logs anyway
+    expect(text).not.toContain('ever spent');
+  });
+});

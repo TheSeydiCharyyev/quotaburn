@@ -484,8 +484,8 @@ const DATA = ${json};
         '<td class="r">' + fmt(e.recreationTokens) + ' tok</td></tr>';
     }).join('');
     var avoidNote = ce.avoidableWith1h < ce.recreationTokens / 10
-      ? 'Only ' + fmt(ce.avoidableWith1h) + " of those tokens would have been saved by the longer 1h TTL — so the fix isn't a longer TTL, it's not resuming stale sessions."
-      : fmt(ce.avoidableWith1h) + ' of those tokens fell in the 5m-to-1h window — a 1h TTL (#46829) would have saved them.';
+      ? 'Only ' + fmt(ce.avoidableWith1h) + " of those tokens would have been saved by the longer 1h TTL — so the fix isn't a longer TTL, it's not resuming stale sessions. On a subscription the main conversation is already cached for 1h; the 5m TTL is what subagents, workflows and compaction get."
+      : fmt(ce.avoidableWith1h) + ' of those tokens fell in the 5m-to-1h window, where a 1h TTL would have saved them: subagents, workflows and compaction, and anything billed to an API key, usage credits or a cloud provider. A subscription already caches the main conversation for 1h.';
     rows.push(row('Cache economics',
       'Caching saves you money overall — but ' + fmt(ce.expiryEvents) + ' idle expiries clawed back ' + share.toFixed(1) + '% of all spend.',
       usd(ce.recreationDollars), 'rebuild cost',
@@ -534,13 +534,13 @@ const DATA = ${json};
   (function () {
     var m = DATA.mcp;
     if (m.length === 0) {
-      rows.push(staticRow('MCP audit', 'No MCP servers configured and none called — zero dead weight in your startup.',
+      rows.push(staticRow('MCP audit', 'No MCP servers configured in .claude.json, and none called. Plugin servers and claude.ai connectors are not listed there, so they are not audited.',
         '<span class="ok">all clear</span>', ''));
       return;
     }
     var dead = m.filter(function (x) { return x.dead; });
     var tbl = m.map(function (x) {
-      return '<tr><td class="mono' + (x.dead ? ' dead' : '') + '">' + esc(x.name) + (x.dead ? ' — dead weight' : '') + '</td>' +
+      return '<tr><td class="mono' + (x.dead ? ' dead' : '') + '">' + esc(x.name) + (x.dead ? ' — never called' : '') + '</td>' +
         '<td>' + esc(x.scope) + '</td><td class="r">' + fmt(x.calls) + '</td></tr>';
     }).join('');
     rows.push(row('MCP audit',

@@ -107,7 +107,7 @@ quotaburn [options]
   -h, --help        show help
 ```
 
-The dollar figures are the **API-list-price value** of your usage. Subscription plans don't bill per token — but your _limits_ are denominated in compute, so cutting the waste quotaburn finds means hitting your limits later. See the [FAQ](docs/FAQ.md).
+The dollar figures are the **API-list-price value** of your usage. Plan usage on a subscription isn't billed per token — but your _limits_ are denominated in compute, so cutting the waste quotaburn finds means hitting your limits later. Usage credits are the exception: over-limit usage, fast mode and Fable on some plans are billed at these very rates. See the [FAQ](docs/FAQ.md).
 
 ## Documentation
 

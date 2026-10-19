@@ -117,7 +117,9 @@ async function main(): Promise<void> {
   console.log(`\n${header('cache expiry')} ${note('(idle gap > TTL → cache died, you paid to rebuild it)')}`);
   console.log(`  expiry events                ${fmt(c.expiryEvents).padStart(12)}`);
   console.log(`  rebuilt after idle           ${fmt(c.recreationTokens).padStart(12)} tok  ≈ ${money(`$${c.recreationDollars.toFixed(2)}`)} at API prices`);
-  console.log(`  avoidable with 1h TTL        ${fmt(c.avoidableWith1h).padStart(12)} tok  ${note('(#46829)')}`);
+  console.log(`  avoidable with 1h TTL        ${fmt(c.avoidableWith1h).padStart(12)} tok  ${note('(gaps under 1h that died on a 5m TTL)')}`);
+  console.log(note('  a subscription already caches the main conversation for 1h; the 5m TTL applies to'));
+  console.log(note('  subagents, workflows and compaction, and to API-key, usage-credit and cloud billing'));
   console.log('  top idle burns:');
   for (const e of c.topEvents.slice(0, 8)) {
     const when = e.timestamp.slice(0, 16).replace('T', ' ');
@@ -140,7 +142,8 @@ function printCost({ sum, unknown }: CostSummary): void {
   console.log(`    output          ${usd(sum.output)}`);
   console.log(`    input (uncached)${usd(sum.input)}`);
   if (unknown.length > 0) console.log(warn(`  excluded (no pricing data): ${unknown.join(', ')}`));
-  console.log(note('  note: subscription plans do not bill per token — this is the API-price value of your usage') + '\n');
+  console.log(note('  note: plan usage is not billed per token — this is its API-price value. Usage credits'));
+  console.log(note('  (over-limit usage, fast mode, Fable on some plans) are billed at these rates; the logs do not mark them') + '\n');
 }
 
 function printFixes(a: Advice): void {
@@ -275,6 +278,7 @@ async function printMcpAudit(r: Awaited<ReturnType<typeof scan>>): Promise<void>
   console.log(`\n${header('MCP servers — configured vs actually used:')}`);
   if (configured.length === 0 && r.mcpCalls.size === 0) {
     console.log(note('  none configured in .claude.json · no mcp__ tool calls in logs — nothing to audit'));
+    console.log(note('  (plugin servers and claude.ai connectors are not in .claude.json, so they are not audited)'));
     return;
   }
   const seen = new Set<string>();
@@ -282,8 +286,13 @@ async function printMcpAudit(r: Awaited<ReturnType<typeof scan>>): Promise<void>
     seen.add(server.name);
     const calls = r.mcpCalls.get(server.name) ?? 0;
     const scope = server.scopes.includes('global') ? 'global' : `${server.scopes.length} project(s)`;
-    const flag = calls === 0 ? warn('  ← dead weight: loaded every session, never called') : '';
+    const flag = calls === 0 ? warn('  ← never called') : '';
     console.log(`  ${server.name.padEnd(32)} ${scope.padEnd(14)} ${fmt(calls).padStart(8)} calls${flag}`);
+  }
+  if (configured.some((s) => (r.mcpCalls.get(s.name) ?? 0) === 0)) {
+    console.log(note('  a never-called server adds its name and instructions to every session start, not its'));
+    console.log(note('  tool schemas — those stay deferred until used, unless tool search is off (ENABLE_TOOL_SEARCH=false,'));
+    console.log(note('  alwaysLoad, a gateway base URL), where the full schemas load every session'));
   }
   for (const [name, calls] of [...r.mcpCalls.entries()].sort((a, b) => b[1] - a[1])) {
     if (!seen.has(name)) {

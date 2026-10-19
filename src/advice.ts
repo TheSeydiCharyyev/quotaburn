@@ -86,7 +86,7 @@ export function computeAdvice(r: ScanResult, cost: CostBreakdown): Advice {
     fixes.push({
       id: 'idle-rebuilds',
       title: "Don't resume idle sessions — start fresh with a short handoff",
-      subtitle: `${usd(c.recreationDollars)} (${share.toFixed(1)}% of everything) went to rebuilding cache that expired while you were away.`,
+      subtitle: `${usd(c.recreationDollars)} (${share.toFixed(1)}% of your last ${win}) went to rebuilding cache that expired while you were away.`,
       monthlyDollars: monthly,
       mathLine: `${fmt(c.expiryEvents)} rebuilds → ${fmt(c.recreationTokens)} tok rewritten → ${usd(c.recreationDollars)} over ${win} ≈ $${monthly.toFixed(0)}/mo`,
       detail: [
@@ -168,10 +168,10 @@ export function computeAdvice(r: ScanResult, cost: CostBreakdown): Advice {
   fixes.sort((a, b) => b.severity - a.severity);
   const top = fixes.slice(0, 4);
 
-  return { headline: buildHeadline(r, cost, top), fixes: top, windowDays };
+  return { headline: buildHeadline(r, cost, top, win), fixes: top, windowDays };
 }
 
-function buildHeadline(r: ScanResult, cost: CostBreakdown, fixes: Fix[]): HeadlinePart[] {
+function buildHeadline(r: ScanResult, cost: CostBreakdown, fixes: Fix[], win: string): HeadlinePart[] {
   const c = r.cache;
   switch (fixes[0]?.id) {
     case 'idle-rebuilds':
@@ -180,7 +180,7 @@ function buildHeadline(r: ScanResult, cost: CostBreakdown, fixes: Fix[]): Headli
         { text: `${fmt(c.expiryEvents)} times`, strong: true },
         { text: ' — ' },
         { text: usd(c.recreationDollars), strong: true },
-        { text: `, ${((c.recreationDollars / cost.total) * 100).toFixed(1)}% of everything you've ever spent.` },
+        { text: `, ${((c.recreationDollars / cost.total) * 100).toFixed(1)}% of what you spent in the last ${win}.` },
       ];
     case 'startup-tax': {
       const sizes = r.startups

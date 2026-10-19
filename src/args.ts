@@ -81,8 +81,10 @@ residency cost (the "top context eaters" report)
   and images by their pixel dimensions, not their base64 length.
 
 cache expiry (the "rebuilt after idle" report)
-  Anthropic's prompt cache expires after its TTL (5 minutes by default,
-  1 hour when 1h cache writes are in use; reads refresh the clock). When a
+  Anthropic's prompt cache expires after its TTL, which depends on the
+  request: a subscription's main conversation gets 1 hour, while subagents,
+  workflows, compaction and anything billed to usage credits, an API key or
+  a cloud provider get 5 minutes (reads refresh the clock). When a
   session sits idle longer than the TTL, the next turn re-writes the cache
   and you pay for it. quotaburn bills that turn's cache_creation as rebuild
   cost. Upper bound: the first turn after a gap also contains genuinely
@@ -91,6 +93,8 @@ cache expiry (the "rebuilt after idle" report)
 dollars
   API list prices (verified October 2026): cache reads cost 0.1× the input
   price on most models, 0.05× on Opus 5.5 and Sonnet 5.5, 0.025× on
-  Fable 5.1; cache writes 1.25× (5m TTL) or 2× (1h TTL). Subscription plans do
-  not bill per token — dollar figures show the API-price value of your
-  usage. Unknown models are excluded from totals, never guessed.`;
+  Fable 5.1; cache writes 1.25× (5m TTL) or 2× (1h TTL). Plan usage on a
+  subscription is not billed per token — dollar figures show the API-price
+  value of your usage. Usage credits are the exception and are billed at
+  these rates: usage past your plan limits, fast mode, and Fable on some
+  plans. Unknown models are excluded from totals, never guessed.`;

@@ -43,7 +43,7 @@ This is why quotaburn's output-token totals can be meaningfully higher than othe
 
 ## Dollars
 
-Dollar figures are the **API-list-price value** of your usage. Subscription plans do not bill per token; this is the same flex other usage tools show, expressed so it can be attributed.
+Dollar figures are the **API-list-price value** of your usage. Plan usage on a subscription is not billed per token; this is the same flex other usage tools show, expressed so it can be attributed. The exception, and it has grown: usage credits *are* billed at these API rates — usage past your plan limits, fast mode, and Fable models on some plans all draw on them. For that slice the dollar figure is a real bill rather than a proxy, and transcripts do not mark which requests those were.
 
 Per-model prices are a built-in table (Anthropic API list prices, verified against the [pricing page](https://platform.claude.com/docs/en/about-claude/pricing) on 2026-10-19). Models are matched by exact id, then by the longest prefix that ends on a version boundary — so a dated id like `claude-haiku-4-5-20251001` resolves to the `claude-haiku-4-5` row, while `claude-opus-5-5` keeps its own row instead of borrowing `claude-opus-5`'s price. Cloud-provider ids (`anthropic.claude-opus-5-5`, `us.anthropic.…`) resolve to the same rows. **Unknown models are excluded from totals, never guessed** — a model with no price contributes zero dollars rather than a fabricated number, so totals are a floor, not an invention. Claude Mythos has no published model id, so it is excluded rather than guessed at.
 
@@ -80,11 +80,11 @@ At each boundary, the residency of every pending result is "settled" (charged up
 
 ## Cache expiry
 
-Anthropic's prompt cache has a TTL — 5 minutes by default, 1 hour when 1h cache writes are in use. Reads refresh the clock; they don't extend the TTL kind. When a session sits **idle longer than its TTL**, the cache dies, and the next turn re-writes the whole context — which you pay for at the cache-write multiplier.
+Anthropic's prompt cache has a TTL, and which one you get depends on the request. On a Claude subscription, within plan usage, the main conversation is cached for **1 hour**; everything else — subagents, workflows, forks, compaction — gets **5 minutes**, and so does anything billed to usage credits, an API key or a cloud provider. Reads refresh the clock; they don't extend the TTL kind. quotaburn reads the TTL actually in effect from each turn's `cache_creation` breakdown rather than assuming one. When a session sits **idle longer than its TTL**, the cache dies, and the next turn re-writes the whole context — which you pay for at the cache-write multiplier.
 
 quotaburn detects this by the time gap between consecutive turns. When the gap exceeds the live TTL, the `cache_creation` tokens on the first turn after the gap are billed as **rebuild cost**, and the event is recorded (when, how long idle, how many tokens, which model).
 
-- **`avoidable with 1h TTL`** isolates the rebuilds where the gap was ≤ 1 hour and the TTL was only 5 minutes — i.e. what a longer TTL would have saved ([anthropics/claude-code#46829](https://github.com/anthropics/claude-code/issues/46829)). When this is small, the lesson isn't "use a longer TTL," it's "don't resume stale sessions."
+- **`avoidable with 1h TTL`** isolates the rebuilds where the gap was ≤ 1 hour and the TTL in effect was only 5 minutes — what a longer TTL would have saved. For a subscriber this is usually near zero, and that is not a bug: the main conversation is already on a 1h TTL, so only the 5m buckets (subagents, workflows, compaction) and credit/API/cloud-billed usage can benefit. When the figure is small, the lesson isn't "use a longer TTL," it's "don't resume stale sessions."
 - **Capped at the prior context size.** A rebuild can't recreate more cache than was alive before the gap, so the billed amount is capped at the context size carried into the gap. If you pasted a large document on the first turn back, that excess `cache_creation` is genuinely new content and is *not* counted as a rebuild. (Right after a compaction there's no prior size to bound against, so the raw figure is used rather than under-counting.)
 - **Still a mild upper bound.** Even within the cap, the first turn back can mix a little new content with the rebuild, so the figure leans high rather than low.
 
@@ -92,7 +92,9 @@ quotaburn detects this by the time gap between consecutive turns. When the gap e
 
 The first assistant turn of a main session already carries the system prompt, tool definitions, skills, and `CLAUDE.md`/memory — before you've done anything. quotaburn records that first-turn context size (input + cache read + cache creation) for every main session and reports the **median** and **p90**.
 
-The spread between median and p90 is usually tiny, which is the real insight: this cost is *structural*, paid on every session, so every instruction or unused MCP server you trim pays off repeatedly. Subagent transcripts are excluded — they don't have a user-facing startup.
+The spread between median and p90 is usually tiny, which is the real insight: this cost is *structural*, paid on every session, so every instruction you trim pays off repeatedly. Subagent transcripts are excluded — they don't have a user-facing startup.
+
+One correction worth stating plainly, because quotaburn used to overstate it: a configured MCP server you never call is **not** loading its tool schemas into every session. Claude Code defers MCP tool definitions by default — only server names and instructions enter the prefix, and the schemas load on demand through tool search. A never-called server therefore costs on the order of a thousand tokens per session start, not its full schema weight. The full weight applies only where deferral is off: `ENABLE_TOOL_SEARCH=false`, an `alwaysLoad` server, a non-first-party `ANTHROPIC_BASE_URL`, or an older cloud model. The audit also reads `~/.claude.json` only, so plugin servers and claude.ai connectors are outside it.
 
 ## Repeated reads
 
