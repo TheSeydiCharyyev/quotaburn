@@ -424,7 +424,15 @@ const DATA = ${json};
   (function () {
     var priced = DATA.byModel.filter(function (m) { return m.dollars !== null; })
       .sort(function (a, b) { return b.dollars - a.dollars; });
-    if (priced.length === 0) return;
+    if (priced.length === 0) {
+      var seen = DATA.byModel.map(function (m) { return esc(m.model); }).join(', ');
+      if (seen) {
+        rows.push(staticRow('By model',
+          'No price for any model in this window, so every dollar figure here is $0. Models seen: ' + seen +
+          '. Update quotaburn to price them.', 'unpriced', ''));
+      }
+      return;
+    }
     var top = priced[0];
     var bars = priced.map(function (m, i) {
       return barRow(m.model, pctOf(m.dollars, c.total), '<b>' + usd(m.dollars) + '</b> · ' + Math.round(pctOf(m.dollars, c.total)) + '%',

@@ -448,6 +448,9 @@ async function scanFile(
   // TTL of the cache entries this session has been writing; reads refresh a TTL,
   // they don't change it, so the mode only moves 5m → 1h when a 1h write appears
   let ttlMode: '5m' | '1h' = '5m';
+  // true when the --days cutoff dropped records from this file: its first counted
+  // turn is then mid-session, and must not be measured as a session's startup cost
+  let skippedPreWindow = false;
 
   for await (const record of parseSessionFile(file.path, ctx.stats)) {
     // --days window: drop pre-cutoff records entirely; their tool_use ids are never
@@ -457,6 +460,7 @@ async function scanFile(
       record.timestamp &&
       Date.parse(record.timestamp) < ctx.cutoffMs
     ) {
+      skippedPreWindow = true;
       continue;
     }
     if (record.sessionId) ctx.sessions.add(record.sessionId);
@@ -608,7 +612,7 @@ async function scanFile(
           }
           if ((msg.usage.cache_creation?.ephemeral_1h_input_tokens ?? 0) > 0) ttlMode = '1h';
 
-          if (turn === 1 && !file.isSubagent) {
+          if (turn === 1 && !file.isSubagent && !skippedPreWindow) {
             ctx.startups.push({
               project: file.project,
               sessionId: record.sessionId ?? '?',

@@ -391,3 +391,47 @@ describe('repeated reads: only a copy still in the same context window counts', 
     expect(r.repeatedReads).toHaveLength(0);
   });
 });
+
+describe('--days windowing', () => {
+  const NL3 = String.fromCharCode(10);
+
+  const turnAt = (uuid: string, iso: string, ctx: number): string =>
+    JSON.stringify({
+      type: 'assistant',
+      sessionId: 's1',
+      uuid,
+      timestamp: iso,
+      message: {
+        id: uuid,
+        model: 'claude-opus-5-5',
+        role: 'assistant',
+        content: [],
+        usage: { input_tokens: 0, output_tokens: 10, cache_read_input_tokens: ctx },
+      },
+    });
+
+  test('a session that began before the window contributes no startup cost', async () => {
+    const cutoff = Date.parse('2026-10-10T00:00:00.000Z');
+    // the session opened at 50k on Oct 1 and was 300k deep by the time the window starts
+    const log = [
+      turnAt('m1', '2026-10-01T10:00:00.000Z', 50_000),
+      turnAt('m2', '2026-10-12T10:00:00.000Z', 300_000),
+      turnAt('m3', '2026-10-12T11:00:00.000Z', 310_000),
+    ].join(NL3);
+    const r = await scan(await makeProject({ 'a.jsonl': log }), { cutoffMs: cutoff });
+    expect(r.assistantTurns).toBe(2);
+    // 300k is mid-conversation context, not what this session started at
+    expect(r.startups).toHaveLength(0);
+  });
+
+  test('a session that began inside the window still reports its startup', async () => {
+    const cutoff = Date.parse('2026-10-10T00:00:00.000Z');
+    const log = [
+      turnAt('m1', '2026-10-12T10:00:00.000Z', 50_000),
+      turnAt('m2', '2026-10-12T11:00:00.000Z', 310_000),
+    ].join(NL3);
+    const r = await scan(await makeProject({ 'a.jsonl': log }), { cutoffMs: cutoff });
+    expect(r.startups).toHaveLength(1);
+    expect(r.startups[0]?.cacheRead).toBe(50_000);
+  });
+});

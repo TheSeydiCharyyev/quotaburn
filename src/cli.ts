@@ -178,6 +178,7 @@ function openInBrowser(file: string): void {
 }
 
 function toJson(r: ScanResult, root: string): Record<string, unknown> {
+  const cost = computeCost(r);
   return {
     quotaburnVersion: pkg.version,
     root,
@@ -190,6 +191,12 @@ function toJson(r: ScanResult, root: string): Record<string, unknown> {
     totals: r.totals,
     subagentTotals: r.subagentTotals,
     byModel: Object.fromEntries(r.byModel),
+    cost: {
+      ...cost.sum,
+      // models with usage but no price in the table: their tokens are counted,
+      // their dollars are not, so every figure above is a floor
+      unpricedModels: cost.unknown,
+    },
     tools: r.tools,
     repeatedReads: r.repeatedReads,
     cache: r.cache,

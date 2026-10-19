@@ -62,9 +62,13 @@ async function refreshStatusBar(): Promise<void> {
     const cost = computeCost(r);
     const headline = headlineText(computeAdvice(r, cost.sum).headline);
     statusBar.text = `$(flame) ${compactUsd(cost.sum.total)}`;
+    const unpriced = cost.unknown.length > 0
+      ? `**Not priced:** ${cost.unknown.join(', ')} — excluded from the figure.\n\n`
+      : '';
     const tip = new vscode.MarkdownString(
       `**quotaburn** — last ${days} day(s) at API list prices\n\n` +
       `*"${headline}"*\n\n` +
+      unpriced +
       `Click for the full report.`,
     );
     statusBar.tooltip = tip;
