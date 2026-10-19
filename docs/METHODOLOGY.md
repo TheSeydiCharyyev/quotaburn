@@ -45,15 +45,17 @@ This is why quotaburn's output-token totals can be meaningfully higher than othe
 
 Dollar figures are the **API-list-price value** of your usage. Subscription plans do not bill per token; this is the same flex other usage tools show, expressed so it can be attributed.
 
-Per-model prices are a built-in table (Anthropic API list prices, cached June 2026). Models are matched by exact id, then by longest prefix — so a dated id like `claude-haiku-4-5-20251001` resolves to the `claude-haiku-4-5` row. **Unknown models are excluded from totals, never guessed** — a model with no price contributes zero dollars rather than a fabricated number, so totals are a floor, not an invention.
+Per-model prices are a built-in table (Anthropic API list prices, verified against the [pricing page](https://platform.claude.com/docs/en/about-claude/pricing) on 2026-10-19). Models are matched by exact id, then by the longest prefix that ends on a version boundary — so a dated id like `claude-haiku-4-5-20251001` resolves to the `claude-haiku-4-5` row, while `claude-opus-5-5` keeps its own row instead of borrowing `claude-opus-5`'s price. Cloud-provider ids (`anthropic.claude-opus-5-5`, `us.anthropic.…`) resolve to the same rows. **Unknown models are excluded from totals, never guessed** — a model with no price contributes zero dollars rather than a fabricated number, so totals are a floor, not an invention. Claude Mythos has no published model id, so it is excluded rather than guessed at.
 
 Cache multipliers, per Anthropic's pricing:
 
 | Token kind | Multiplier on input price |
 | --- | --- |
-| Cache read | 0.1× |
+| Cache read | 0.1× on most models; **0.05×** on Opus 5.5 and Sonnet 5.5, **0.025×** on Fable 5.1 |
 | Cache write, 5-minute TTL | 1.25× |
 | Cache write, 1-hour TTL | 2× |
+
+Two table caveats worth knowing. Haiku 5.5 is priced in two tiers by prompt size; quotaburn applies the ≤100k-token tier, which is where Claude Code's Haiku requests sit — a Haiku 5.5 prompt above 100k tokens is under-priced 5×. And a hand-maintained table goes stale: a model released after the date above is excluded (and named in the "excluded (no pricing data)" line) until the table is updated.
 
 ## Residency cost
 

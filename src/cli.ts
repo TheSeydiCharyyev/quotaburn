@@ -11,7 +11,7 @@ import { EXPLAIN, HELP, parseArgs } from './args.js';
 import { claudeProjectsDir } from './discover.js';
 import { readConfiguredMcpServers } from './mcpconfig.js';
 import {
-  CACHE_READ_MULT, CACHE_WRITE_1H_MULT, CACHE_WRITE_5M_MULT,
+  CACHE_READ_MULT_RANGE, CACHE_WRITE_1H_MULT, CACHE_WRITE_5M_MULT,
   costOfTotals, resolvePricing,
 } from './pricing.js';
 import { renderHtmlReport } from './report.js';
@@ -132,7 +132,7 @@ function printCost({ sum, unknown }: CostSummary): void {
   const usd = (n: number): string => `$${n.toFixed(2)}`.padStart(12);
   console.log(header('estimated cost at API list prices:'));
   console.log(`  total             ${money(usd(sum.total))}`);
-  console.log(`    cache read      ${usd(sum.cacheRead)}   ${note(`(${CACHE_READ_MULT}× input price)`)}`);
+  console.log(`    cache read      ${usd(sum.cacheRead)}   ${note(`(${CACHE_READ_MULT_RANGE[0]}–${CACHE_READ_MULT_RANGE[1]}× input price, per model)`)}`);
   console.log(`    cache write     ${usd(sum.cacheWrite)}   ${note(`(${CACHE_WRITE_5M_MULT}× 5m / ${CACHE_WRITE_1H_MULT}× 1h)`)}`);
   console.log(`    output          ${usd(sum.output)}`);
   console.log(`    input (uncached)${usd(sum.input)}`);

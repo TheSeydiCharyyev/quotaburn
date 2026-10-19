@@ -86,7 +86,8 @@ cache expiry (the "rebuilt after idle" report)
   new content.
 
 dollars
-  API list prices (cached June 2026): cache reads cost 0.1× the input
-  price, cache writes 1.25× (5m TTL) or 2× (1h TTL). Subscription plans do
+  API list prices (verified October 2026): cache reads cost 0.1× the input
+  price on most models, 0.05× on Opus 5.5 and Sonnet 5.5, 0.025× on
+  Fable 5.1; cache writes 1.25× (5m TTL) or 2× (1h TTL). Subscription plans do
   not bill per token — dollar figures show the API-price value of your
   usage. Unknown models are excluded from totals, never guessed.`;
