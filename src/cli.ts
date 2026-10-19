@@ -101,7 +101,10 @@ async function main(): Promise<void> {
     );
   }
 
-  console.log(`\n${header('repeated file reads')} ${note('(same file, same context window)')}`);
+  console.log(`\n${header('repeated file reads')} ${note('(same file, same slice, same context window)')}`);
+  if (r.repeatedReads.length === 0) {
+    console.log(note('  none — no file was re-read while an identical copy was still in context'));
+  }
   for (const rr of r.repeatedReads.slice(0, 10)) {
     console.log(`  ${String(rr.reads).padStart(3)}× ${shorten(rr.filePath, 70).padEnd(72)} ~${fmt(rr.wastedTokens).padStart(10)} tok wasted`);
   }

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { discoverSessionFiles } from './discover.js';
@@ -27,7 +28,7 @@ export interface ToolAttribution {
 export interface RepeatedRead {
   filePath: string;
   reads: number;
-  /** estimated tokens of the redundant reads (all but the first) */
+  /** estimated tokens of the reads that re-added a copy already in context */
   wastedTokens: number;
 }
 
@@ -137,6 +138,12 @@ function addUsage(t: TokenTotals, u: Usage): void {
   }
 }
 
+/** content identity, so a changed file re-read is not counted as a duplicate */
+function fingerprint(content: unknown): string {
+  const text = typeof content === 'string' ? content : JSON.stringify(content) ?? '';
+  return createHash('sha1').update(text).digest('hex');
+}
+
 function displayName(toolName: string): string {
   if (toolName.startsWith('mcp__')) {
     const server = toolName.split('__')[1] ?? toolName;
@@ -178,7 +185,7 @@ export async function scan(root: string, options: ScanOptions = {}): Promise<Sca
   const subagentTotals = emptyTotals();
   const byModel = new Map<string, TokenTotals>();
   const toolAgg = new Map<string, { calls: number; addedTokens: number; residencyCost: number }>();
-  const readAgg = new Map<string, { reads: number; tokensPerRead: number[] }>();
+  const readAgg = new Map<string, { reads: number; wastedTokens: number }>();
   const sessions = new Set<string>();
   const cacheEvents: CacheExpiryEvent[] = [];
   const startups: SessionStartup[] = [];
@@ -293,12 +300,7 @@ export async function scan(root: string, options: ScanOptions = {}): Promise<Sca
     .sort((a, b) => b.residencyCost - a.residencyCost);
 
   const repeatedReads: RepeatedRead[] = [...readAgg.entries()]
-    .filter(([, a]) => a.reads > 1)
-    .map(([filePath, a]) => {
-      const total = a.tokensPerRead.reduce((s, n) => s + n, 0);
-      const avg = total / a.tokensPerRead.length;
-      return { filePath, reads: a.reads, wastedTokens: Math.round(avg * (a.reads - 1)) };
-    })
+    .map(([filePath, a]) => ({ filePath, reads: a.reads, wastedTokens: a.wastedTokens }))
     .sort((a, b) => b.wastedTokens - a.wastedTokens);
 
   return {
@@ -340,7 +342,7 @@ interface FileScanContext {
   subagentTotals: TokenTotals;
   byModel: Map<string, TokenTotals>;
   toolAgg: Map<string, { calls: number; addedTokens: number; residencyCost: number }>;
-  readAgg: Map<string, { reads: number; tokensPerRead: number[] }>;
+  readAgg: Map<string, { reads: number; wastedTokens: number }>;
   sessions: Set<string>;
   cacheEvents: CacheExpiryEvent[];
   startups: SessionStartup[];
@@ -395,7 +397,10 @@ async function scanFile(
 ): Promise<{ totals: TokenTotals; firstTimestamp: string | null; lastTimestamp: string | null }> {
   // per-file state: each .jsonl is one context window (main session or subagent)
   const toolUseNames = new Map<string, string>();
-  const toolUseReadPath = new Map<string, string>();
+  const toolUseReadPath = new Map<string, { path: string; range: string }>();
+  // identical copies currently in this session's context window, keyed by path and
+  // read range: cleared at every compaction/reset, so a re-read after one is not waste
+  const inContext = new Map<string, string>();
   const pending: PendingResult[] = [];
   // message.id+requestId → highest output_tokens seen so far for that message.
   // Streamed messages are logged as several records with PROGRESSIVE usage:
@@ -480,6 +485,7 @@ async function scanFile(
         ctx.onContextReset();
         turnsSinceReset = 0;
       }
+      inContext.clear();
       prevCtxSize = 0;
       ttlMode = '5m'; // the post-compaction cache is written fresh at the default TTL
       continue;
@@ -504,7 +510,11 @@ async function scanFile(
             ctx.mcpCalls.set(server, (ctx.mcpCalls.get(server) ?? 0) + 1);
           }
           if (tu.name === 'Read' && typeof tu.input?.['file_path'] === 'string') {
-            toolUseReadPath.set(tu.id, tu.input['file_path'] as string);
+            // a paginated read is a different slice of the file, not a second copy
+            const offset = tu.input['offset'];
+            const limit = tu.input['limit'];
+            const range = `${typeof offset === 'number' ? offset : ''}-${typeof limit === 'number' ? limit : ''}`;
+            toolUseReadPath.set(tu.id, { path: tu.input['file_path'] as string, range });
           }
         }
       }
@@ -550,6 +560,7 @@ async function scanFile(
               settleResidency(turn);
               ctx.onContextReset();
               turnsSinceReset = 0;
+              inContext.clear();
             }
             ttlMode = '5m'; // context was rebuilt fresh; the new cache starts at the default TTL
           }
@@ -643,12 +654,22 @@ async function scanFile(
         if (!toolName) continue;
         const tokens = estimateContentTokens(tr.content, charsPerToken);
         pending.push({ tokens, turnAdded: turn, displayName: displayName(toolName) });
-        const readPath = toolUseReadPath.get(tr.tool_use_id);
-        if (readPath) {
-          const r = ctx.readAgg.get(readPath) ?? { reads: 0, tokensPerRead: [] };
-          r.reads++;
-          r.tokensPerRead.push(tokens);
-          ctx.readAgg.set(readPath, r);
+        const read = toolUseReadPath.get(tr.tool_use_id);
+        if (read && record.toolUseResult?.type !== 'file_unchanged') {
+          // Claude Code answers an unchanged re-read with a stub instead of the file
+          // (toolUseResult.type "file_unchanged"), so that costs nothing to re-add
+          const key = read.path + "\u0000" + read.range;
+          const copy = fingerprint(tr.content);
+          if (inContext.get(key) === copy) {
+            // the identical copy is still in this context window: this read is waste
+            const r = ctx.readAgg.get(read.path) ?? { reads: 1, wastedTokens: 0 };
+            r.reads++;
+            r.wastedTokens += tokens;
+            ctx.readAgg.set(read.path, r);
+          } else {
+            // first read of this slice, or the file changed since — not waste
+            inContext.set(key, copy);
+          }
         }
       }
     }

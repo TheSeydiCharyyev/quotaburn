@@ -96,7 +96,16 @@ The spread between median and p90 is usually tiny, which is the real insight: th
 
 ## Repeated reads
 
-When the same `file_path` is read more than once within a single session's context window, every read after the first is redundant — the content was already resident. quotaburn estimates the wasted tokens as the average read size × (reads − 1) and ranks files by total waste.
+A read is counted as waste only when it re-adds a copy that is still in the context window. All four conditions have to hold:
+
+1. **Same session transcript.** Reads in another session, or in a subagent, land in a different context window — they are not copies of each other.
+2. **Same context segment.** The window is cleared at every compaction or reset, so a re-read after one is necessary, not wasteful.
+3. **Same slice.** A `Read` with a different `offset`/`limit` is a different part of the file; paging through a large file is not re-reading it.
+4. **Same content.** Each result is fingerprinted (SHA-1), so re-reading a file that changed in between is a new read, not a duplicate.
+
+Each counted duplicate is charged at its own estimated size, not at an average over every read of that path. Claude Code also answers an unchanged re-read with a short stub instead of the file (its tool result is typed `file_unchanged`); those are skipped, since re-adding a stub costs almost nothing.
+
+This is deliberately strict. An earlier version keyed only on the file path across the whole scan, which reported cross-session reads and paginated reads as waste — on the author’s own logs it claimed ~213k wasted tokens where the strict rule finds none.
 
 ## Per-session attribution
 

@@ -304,3 +304,90 @@ describe('placeholder assistant records (failed requests) are not context resets
     expect(r.contextResets).toBe(1);
   });
 });
+
+describe('repeated reads: only a copy still in the same context window counts', () => {
+  const NL2 = String.fromCharCode(10);
+  let n = 0;
+
+  // one turn that reads a file, plus the result it gets back
+  const readTurn = (file: string, content: string, range?: { offset?: number; limit?: number }, result?: Record<string, unknown>): string[] => {
+    n++;
+    const id = 'tu' + n;
+    const input: Record<string, unknown> = { file_path: file };
+    if (range?.offset !== undefined) input['offset'] = range.offset;
+    if (range?.limit !== undefined) input['limit'] = range.limit;
+    return [
+      JSON.stringify({
+        type: 'assistant',
+        sessionId: 's1',
+        uuid: 'a' + n,
+        timestamp: '2026-10-19T10:00:00.000Z',
+        message: {
+          id: 'a' + n,
+          model: 'claude-opus-5-5',
+          role: 'assistant',
+          content: [{ type: 'tool_use', id, name: 'Read', input }],
+          usage: { input_tokens: 0, output_tokens: 5, cache_read_input_tokens: 1000 },
+        },
+      }),
+      JSON.stringify({
+        type: 'user',
+        sessionId: 's1',
+        uuid: 'u' + n,
+        ...(result ?? {}),
+        message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content }] },
+      }),
+    ];
+  };
+
+  const body = 'z'.repeat(2500); // 1,000 tokens at 2.5 chars/token
+
+  test('the same copy read twice in one window is waste, at its real size', async () => {
+    const log = [...readTurn('/tmp/a.txt', body), ...readTurn('/tmp/a.txt', body)].join(NL2);
+    const r = await scan(await makeProject({ 'a.jsonl': log }));
+    expect(r.repeatedReads).toHaveLength(1);
+    expect(r.repeatedReads[0]).toMatchObject({ filePath: '/tmp/a.txt', reads: 2, wastedTokens: 1000 });
+  });
+
+  test('reads in separate sessions are not repeats of each other', async () => {
+    const r = await scan(
+      await makeProject({
+        'a.jsonl': readTurn('/tmp/a.txt', body).join(NL2),
+        'b.jsonl': readTurn('/tmp/a.txt', body).join(NL2),
+      }),
+    );
+    expect(r.repeatedReads).toHaveLength(0);
+  });
+
+  test('paginated reads of one file are different slices, not copies', async () => {
+    const log = [
+      ...readTurn('/tmp/big.ts', body, { offset: 1, limit: 100 }),
+      ...readTurn('/tmp/big.ts', body, { offset: 101, limit: 100 }),
+    ].join(NL2);
+    const r = await scan(await makeProject({ 'a.jsonl': log }));
+    expect(r.repeatedReads).toHaveLength(0);
+  });
+
+  test('a re-read after a compaction is not waste: the first copy left the window', async () => {
+    const boundary = JSON.stringify({ type: 'system', sessionId: 's1', uuid: 'c1', subtype: 'compact_boundary' });
+    const log = [...readTurn('/tmp/a.txt', body), boundary, ...readTurn('/tmp/a.txt', body)].join(NL2);
+    const r = await scan(await makeProject({ 'a.jsonl': log }));
+    expect(r.repeatedReads).toHaveLength(0);
+  });
+
+  test('a changed file is a new read, not a duplicate', async () => {
+    const log = [...readTurn('/tmp/a.txt', body), ...readTurn('/tmp/a.txt', body + 'edited')].join(NL2);
+    const r = await scan(await makeProject({ 'a.jsonl': log }));
+    expect(r.repeatedReads).toHaveLength(0);
+  });
+
+  test("Claude Code's own unchanged-file stub is not waste", async () => {
+    const stub = 'Wasted call - file unchanged since your last Read.';
+    const log = [
+      ...readTurn('/tmp/a.txt', body),
+      ...readTurn('/tmp/a.txt', stub, undefined, { toolUseResult: { type: 'file_unchanged' } }),
+    ].join(NL2);
+    const r = await scan(await makeProject({ 'a.jsonl': log }));
+    expect(r.repeatedReads).toHaveLength(0);
+  });
+});

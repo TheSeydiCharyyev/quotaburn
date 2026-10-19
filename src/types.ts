@@ -60,6 +60,8 @@ export interface LogRecord {
   /** on "last-prompt" records: the user's most recent prompt text */
   lastPrompt?: string;
   message?: LogMessage;
+  /** on user records carrying a tool result: Claude Code's own typed summary of it */
+  toolUseResult?: { type?: string };
 }
 
 export interface SessionFile {
