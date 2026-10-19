@@ -22,7 +22,7 @@ git clone https://github.com/TheSeydiCharyyev/quotaburn
 cd quotaburn
 npm install
 npm run dev        # run against your real logs (tsx src/cli.ts)
-npm test           # vitest, 33 tests
+npm test           # vitest, 69 tests
 npm run typecheck  # tsc --noEmit
 npm run build      # bundle to dist/cli.js
 ```

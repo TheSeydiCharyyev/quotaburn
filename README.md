@@ -22,7 +22,7 @@ Most usage tools answer **how much** you burned. quotaburn answers **where it we
 
 It reads the session logs Claude Code already writes to `~/.claude/projects`. No install, no signup, no config, no network. The published package is a single readable file with zero dependencies.
 
-> Run on my own history: **~$3,000 of API-priced usage, and 21% of it was rebuilding prompt cache that expired while I was away from idle sessions.** One habit change — start fresh instead of resuming — saves ~$535/month. Your numbers will be different. That's the point.
+> Run on my own history: **$2,114 of API-priced usage over 71 days, and 29.9% of it was rebuilding prompt cache that expired while I was away from idle sessions.** One habit change — start fresh instead of resuming — saves ~$268/month. Your numbers will be different. That is the point.
 
 ## Quick start
 
@@ -53,14 +53,16 @@ Six reports, all derived from data already on your disk:
 The headline feature is not generic advice — it's a **ledger**. Each fix is priced **per month at your own blended API rates**, projected from your actual data window, with the full calculation shown:
 
 ```
-top fixes (savings projected from your last 36 days at your blended API rates):
-  1. Don't resume idle sessions — start fresh with a short handoff   ~$535/mo
-     199 rebuilds → 63,062,194 tok rewritten → $646.41 over 36 days
-  2. Stop re-reading the same files                                   ~$50/mo
-  3. Trim your session startup                                        ~$49/mo
+top fixes (savings projected from your last 71 days at your blended API rates)
+  1. Don't resume idle sessions — start fresh with a short handoff  ~$268/mo
+     $632.50 (29.9% of your last 71 days) went to rebuilding cache that expired while you were away.
+     147 rebuilds → 53,660,584 tok rewritten → $632.50 over 71 days ≈ $268/mo
+  2. Trim your session startup  ~$24/mo
+     Every session opens ~54,489 tokens deep before your first word — and that prefix rides along on every later turn.
+     54,489 tok prefix × 10,318 turns × $0.30/M cache-read ≈ $170.81 over 71 days — trim ⅓ → ~$24/mo
 
-  "You paid to rebuild expired cache 199 times — $646.41,
-   21.3% of everything you've ever spent."
+  "You paid to rebuild expired cache 147 times — $632.50,
+   29.9% of what you spent in the last 71 days."
 ```
 
 That last line is your **headline** — one copy-paste-ready sentence summarizing your single biggest leak.
